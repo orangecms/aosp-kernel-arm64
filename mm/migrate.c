@@ -41,6 +41,9 @@
 #include <linux/page_idle.h>
 #include <linux/page_owner.h>
 #include <linux/ptrace.h>
+#ifdef CONFIG_AMLOGIC_CMA
+#include <linux/delay.h>
+#endif
 
 #include <asm/tlbflush.h>
 
@@ -164,6 +167,10 @@ void putback_movable_pages(struct list_head *l)
 	struct page *page2;
 
 	list_for_each_entry_safe(page, page2, l, lru) {
+	#ifdef CONFIG_AMLOGIC_CMA
+		if (PageCmaAllocating(page))	/* migrate/reclaim failed */
+			ClearPageCmaAllocating(page);
+	#endif
 		if (unlikely(PageHuge(page))) {
 			putback_active_hugepage(page);
 			continue;
@@ -301,6 +308,9 @@ void __migration_entry_wait(struct mm_struct *mm, pte_t *ptep,
 	pte_t pte;
 	swp_entry_t entry;
 	struct page *page;
+#ifdef CONFIG_AMLOGIC_CMA
+	bool need_wait = 0;
+#endif
 
 	spin_lock(ptl);
 	pte = *ptep;
@@ -312,6 +322,17 @@ void __migration_entry_wait(struct mm_struct *mm, pte_t *ptep,
 		goto out;
 
 	page = migration_entry_to_page(entry);
+#ifdef CONFIG_AMLOGIC_CMA
+	/* This page is under cma allocating, do not increase it ref */
+	if (PageCmaAllocating(page)) {
+		pr_debug("%s, Page:%lx, flags:%lx, m:%d, c:%d, map:%p\n",
+			__func__, page_to_pfn(page), page->flags,
+			page_mapcount(page), page_count(page),
+			page->mapping);
+		need_wait = 1;
+		goto out;
+	}
+#endif
 
 	/*
 	 * Once radix-tree replacement of page migration started, page_count
@@ -328,6 +349,10 @@ void __migration_entry_wait(struct mm_struct *mm, pte_t *ptep,
 	return;
 out:
 	pte_unmap_unlock(ptep, ptl);
+#ifdef CONFIG_AMLOGIC_CMA
+	if (need_wait)
+		usleep_range(1000, 1100);
+#endif
 }
 
 void migration_entry_wait(struct mm_struct *mm, pmd_t *pmd,
@@ -646,6 +671,8 @@ void migrate_page_copy(struct page *newpage, struct page *page)
 		SetPageActive(newpage);
 	} else if (TestClearPageUnevictable(page))
 		SetPageUnevictable(newpage);
+	if (PageWorkingset(page))
+		SetPageWorkingset(newpage);
 	if (PageChecked(page))
 		SetPageChecked(newpage);
 	if (PageMappedToDisk(page))
@@ -1063,10 +1090,13 @@ out:
 	 * If migration is successful, decrease refcount of the newpage
 	 * which will not free the page because new page owner increased
 	 * refcounter. As well, if it is LRU page, add the page to LRU
-	 * list in here.
+	 * list in here. Use the old state of the isolated source page to
+	 * determine if we migrated a LRU page. newpage was already unlocked
+	 * and possibly modified by its owner - don't rely on the page
+	 * state.
 	 */
 	if (rc == MIGRATEPAGE_SUCCESS) {
-		if (unlikely(__PageMovable(newpage)))
+		if (unlikely(!is_lru))
 			put_page(newpage);
 		else
 			putback_lru_page(newpage);
@@ -1196,6 +1226,10 @@ put_new:
 		else
 			*result = page_to_nid(newpage);
 	}
+#ifdef CONFIG_AMLOGIC_CMA
+	if (reason == MR_CMA && rc == MIGRATEPAGE_SUCCESS)
+		ClearPageCmaAllocating(page);
+#endif
 	return rc;
 }
 
@@ -1250,6 +1284,16 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 		lock_page(hpage);
 	}
 
+	/*
+	 * Check for pages which are in the process of being freed.  Without
+	 * page_mapping() set, hugetlbfs specific move page routine will not
+	 * be called and we could leak usage counts for subpools.
+	 */
+	if (page_private(hpage) && !page_mapping(hpage)) {
+		rc = -EBUSY;
+		goto out_unlock;
+	}
+
 	if (PageAnon(hpage))
 		anon_vma = page_get_anon_vma(hpage);
 
@@ -1281,6 +1325,7 @@ put_anon:
 		set_page_owner_migrate_reason(new_hpage, reason);
 	}
 
+out_unlock:
 	unlock_page(hpage);
 out:
 	if (rc != -EAGAIN)

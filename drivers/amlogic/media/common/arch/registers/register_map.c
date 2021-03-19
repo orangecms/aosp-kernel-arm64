@@ -50,12 +50,19 @@ enum {
 };
 
 static void __iomem *codecio_reg_map[CODECIO_BUS_MAX];
+static u32 codecio_reg_max[CODECIO_BUS_MAX];
 
 static inline int codecio_reg_read(u32 bus_type, u32 reg, u32 *val)
 {
 	if (bus_type < CODECIO_BUS_MAX) {
-		if (codecio_reg_map[bus_type] == NULL) {
-			pr_err("No support bus type %d to read.\n", bus_type);
+		if (
+			(!codecio_reg_map[bus_type]) ||
+			(codecio_reg_max[bus_type] < reg)) {
+			pr_err(
+				"Not supported bus type %d or addr %x to read.\n",
+				bus_type,
+				reg);
+			dump_stack();
 			return -1;
 		}
 
@@ -68,8 +75,14 @@ static inline int codecio_reg_read(u32 bus_type, u32 reg, u32 *val)
 static inline int codecio_reg_write(u32 bus_type, u32 reg, u32 val)
 {
 	if (bus_type < CODECIO_BUS_MAX) {
-		if (codecio_reg_map[bus_type] == NULL) {
-			pr_err("No support bus type %d to write.\n", bus_type);
+		if (
+			(!codecio_reg_map[bus_type]) ||
+			(codecio_reg_max[bus_type] < reg)) {
+			pr_err(
+				"Not supported bus type %d or addr %x to write.\n",
+				bus_type,
+				reg);
+			dump_stack();
 			return -1;
 		}
 
@@ -85,7 +98,7 @@ int codecio_read_cbus(unsigned int reg)
 
 	ret = codecio_reg_read(CODECIO_CBUS_BASE, reg << 2, &val);
 	if (ret) {
-		pr_err("read cbus reg %x error %d\n", reg, ret);
+		// pr_err("read cbus reg %x error %d\n", reg, ret);
 		return -1;
 	} else
 		return val;
@@ -109,7 +122,7 @@ int codecio_read_dosbus(unsigned int reg)
 
 	ret = codecio_reg_read(CODECIO_DOSBUS_BASE, reg << 2, &val);
 	if (ret) {
-		pr_err("read cbus reg %x error %d\n", reg, ret);
+		// pr_err("read cbus reg %x error %d\n", reg, ret);
 		return -1;
 	} else
 		return val;
@@ -380,6 +393,7 @@ static int codec_io_probe(struct platform_device *pdev)
 			pr_debug("ignore io source start %p,size=%d\n",
 				(void *)res.start, (int)resource_size(&res));
 		}
+		codecio_reg_max[i] = res.end - res.start;
 		i++;
 	}
 	/*pr_info("amlogic codec_io probe done\n"); */

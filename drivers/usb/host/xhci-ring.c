@@ -393,8 +393,13 @@ void xhci_ring_ep_doorbell(struct xhci_hcd *xhci,
 	 * pointer command pending because the device can choose to start any
 	 * stream once the endpoint is on the HW schedule.
 	 */
+#ifdef CONFIG_AMLOGIC_USB
+	if ((ep_state & EP_STOP_CMD_PENDING) || (ep_state & SET_DEQ_PENDING)
+		|| (ep_state & EP_HALTED))
+#else
 	if ((ep_state & EP_HALT_PENDING) || (ep_state & SET_DEQ_PENDING) ||
 	    (ep_state & EP_HALTED))
+#endif
 		return;
 	writel(DB_VALUE(ep_index, stream_id), db_addr);
 	/* The CPU has better things to do at this point than wait for a
@@ -632,13 +637,19 @@ static void td_to_noop(struct xhci_hcd *xhci, struct xhci_ring *ep_ring,
 static void xhci_stop_watchdog_timer_in_irq(struct xhci_hcd *xhci,
 		struct xhci_virt_ep *ep)
 {
+#ifdef CONFIG_AMLOGIC_USB
+	ep->ep_state &= ~EP_STOP_CMD_PENDING;
+	/* Can't del_timer_sync in interrupt */
+	del_timer(&ep->stop_cmd_timer);
+#else
 	ep->ep_state &= ~EP_HALT_PENDING;
-	/* Can't del_timer_sync in interrupt, so we attempt to cancel.  If the
+	/* Can't del_timer_sync in interrupt, so we attempt to cancel.	If the
 	 * timer is running on another CPU, we don't decrement stop_cmds_pending
 	 * (since we didn't successfully stop the watchdog timer).
 	 */
 	if (del_timer(&ep->stop_cmd_timer))
 		ep->stop_cmds_pending--;
+#endif
 }
 
 /* Must be called with xhci->lock held in interrupt context */
@@ -902,10 +913,15 @@ static void xhci_kill_endpoint_urbs(struct xhci_hcd *xhci,
  * simple flag to say whether there is a pending stop endpoint command for a
  * particular endpoint.
  *
+#ifdef CONFIG_AMLOGIC_USB
+ * Instead we use a combination of that flag and checking if a new timer is
+ * pending.
+#else
  * Instead we use a combination of that flag and a counter for the number of
  * pending stop endpoint commands.  If the timer is the tail end of the last
  * stop endpoint command, and the endpoint's command is still pending, we assume
  * the host is dying.
+#endif
  */
 void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 {
@@ -919,12 +935,21 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 
 	spin_lock_irqsave(&xhci->lock, flags);
 
+#ifdef CONFIG_AMLOGIC_USB
+	/* bail out if cmd completed but raced with stop ep watchdog timer.*/
+	if (!(ep->ep_state & EP_STOP_CMD_PENDING) ||
+	    timer_pending(&ep->stop_cmd_timer)) {
+#else
 	ep->stop_cmds_pending--;
 	if (!(ep->stop_cmds_pending == 0 && (ep->ep_state & EP_HALT_PENDING))) {
 		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 				"Stop EP timer ran, but no command pending, "
 				"exiting.");
+#endif
 		spin_unlock_irqrestore(&xhci->lock, flags);
+#ifdef CONFIG_AMLOGIC_USB
+		xhci_dbg(xhci, "Stop EP timer raced with cmd completion, exit");
+#endif
 		return;
 	}
 
@@ -933,7 +958,12 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 	/* Oops, HC is dead or dying or at least not responding to the stop
 	 * endpoint command.
 	 */
+
 	xhci->xhc_state |= XHCI_STATE_DYING;
+#ifdef CONFIG_AMLOGIC_USB
+	ep->ep_state &= ~EP_STOP_CMD_PENDING;
+#endif
+
 	/* Disable interrupts from the host controller and start halting it */
 	xhci_quiesce(xhci);
 	spin_unlock_irqrestore(&xhci->lock, flags);
@@ -1645,10 +1675,13 @@ static void handle_port_status(struct xhci_hcd *xhci,
 		}
 	}
 
-	if ((temp & PORT_PLC) && (temp & PORT_PLS_MASK) == XDEV_U0 &&
-			DEV_SUPERSPEED_ANY(temp)) {
+	if ((temp & PORT_PLC) &&
+	    DEV_SUPERSPEED_ANY(temp) &&
+	    ((temp & PORT_PLS_MASK) == XDEV_U0 ||
+	     (temp & PORT_PLS_MASK) == XDEV_U1 ||
+	     (temp & PORT_PLS_MASK) == XDEV_U2)) {
 		xhci_dbg(xhci, "resume SS port %d finished\n", port_id);
-		/* We've just brought the device into U0 through either the
+		/* We've just brought the device into U0/1/2 through either the
 		 * Resume state after a device remote wakeup, or through the
 		 * U3Exit state after a host-initiated resume.  If it's a device
 		 * initiated remote wake, don't pass up the link state change,
@@ -1676,7 +1709,7 @@ static void handle_port_status(struct xhci_hcd *xhci,
 	 * RExit to a disconnect state).  If so, let the the driver know it's
 	 * out of the RExit state.
 	 */
-	if (!DEV_SUPERSPEED_ANY(temp) &&
+	if (!DEV_SUPERSPEED_ANY(temp) && hcd->speed < HCD_USB3 &&
 			test_and_clear_bit(faked_port_index,
 				&bus_state->rexit_ports)) {
 		complete(&bus_state->rexit_done[faked_port_index]);
@@ -3463,7 +3496,7 @@ int xhci_test_single_step(struct xhci_hcd *xhci, gfp_t mem_flags,
 	/* 15 second delay per the test spec */
 	spin_unlock_irqrestore(&xhci->lock, flags);
 	xhci_err(xhci, "step 1\n");
-	msleep(15000);
+	msleep(30000);
 	spin_lock_irqsave(&xhci->lock, flags);
 
 	start_trb = &ep_ring->enqueue->generic;
@@ -3500,7 +3533,7 @@ int xhci_test_single_step(struct xhci_hcd *xhci, gfp_t mem_flags,
 	/* 15 second delay per the test spec */
 	spin_unlock_irqrestore(&xhci->lock, flags);
 	xhci_err(xhci, "step 2\n");
-	msleep(15000);
+	msleep(30000);
 	spin_lock_irqsave(&xhci->lock, flags);
 
 	/* Save the DMA address of the last TRB in the TD */
@@ -3526,7 +3559,7 @@ int xhci_test_single_step(struct xhci_hcd *xhci, gfp_t mem_flags,
 	/* 15 second delay per the test spec */
 	spin_unlock_irqrestore(&xhci->lock, flags);
 	xhci_err(xhci, "step 3\n");
-	msleep(15000);
+	msleep(30000);
 
 	return 0;
 }

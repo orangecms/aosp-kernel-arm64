@@ -26,6 +26,7 @@
 /* #include <linux/amlogic/aml_common.h> */
 #include <linux/amlogic/cpu_version.h>
 #include <linux/amlogic/media/vfm/vframe.h>
+#include <linux/amlogic/media/video_sink/video.h>
 #include <linux/amlogic/media/amvecm/amvecm.h>
 #include <linux/amlogic/media/amdolbyvision/dolby_vision.h>
 #include <linux/amlogic/media/vout/vinfo.h>
@@ -37,6 +38,7 @@
 #include <linux/io.h>
 #include "dnlp_cal.h"
 #include "local_contrast.h"
+#include "amcm.h"
 
 #define pr_amve_dbg(fmt, args...)\
 	do {\
@@ -47,6 +49,7 @@
 /* printk(KERN_##(KERN_INFO) "AMVECM: " fmt, ## args) */
 
 #define GAMMA_RETRY        1000
+unsigned int gamma_loadprotect_en;
 
 /* 0: Invalid */
 /* 1: Valid */
@@ -121,6 +124,12 @@ int video_rgb_ogo_xvy_mtx_latch;
 
 static unsigned int assist_cnt;/* ASSIST_SPARE8_REG1; */
 
+/*0: recovery mode
+ *1: certification mode
+ *2: bypass mode, vadj1 follow config for ui setting
+ */
+static int dv_pq_bypass;
+
 /* 3d sync parts begin */
 unsigned int sync_3d_h_start;
 unsigned int sync_3d_h_end;
@@ -178,15 +187,32 @@ void ve_hist_gamma_reset(void)
 void ve_dnlp_load_reg(void)
 {
 	int i;
+	int offset = 0;
+	int dnlp_reg = 0;
+	struct vinfo_s *vinfo = get_current_vinfo();
 
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TM2)) {
+		if (is_meson_rev_a() && is_meson_tm2_cpu())
+			offset = 0;
+		else if (get_cpu_type() == MESON_CPU_MAJOR_ID_SC2)
+			offset = 0x1200;
+		else
+			offset = 0x1300;
+	}
 	if  (dnlp_sel == NEW_DNLP_IN_SHARPNESS) {
 		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu()) {
 			for (i = 0; i < 16; i++)
 				WRITE_VPP_REG(SRSHARP1_DNLP_00 + i,
 					ve_dnlp_reg[i]);
-		} else if (is_meson_tl1_cpu()) {
+		} else if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
+			if (vinfo->viu_color_fmt != COLOR_FMT_RGB444)
+				dnlp_reg = SHARP0_DNLP_00 + offset;
+			else
+				dnlp_reg = SHARP1_DNLP_00 + offset;
+
 			for (i = 0; i < 32; i++)
-				WRITE_VPP_REG(SHARP1_DNLP_00 + i,
+				WRITE_VPP_REG(
+					dnlp_reg + i,
 					ve_dnlp_reg_v2[i]);
 		} else {
 			for (i = 0; i < 16; i++)
@@ -204,15 +230,32 @@ void ve_dnlp_load_reg(void)
 static void ve_dnlp_load_def_reg(void)
 {
 	int i;
+	int offset = 0;
+	int dnlp_reg = 0;
+	struct vinfo_s *vinfo = get_current_vinfo();
 
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TM2)) {
+		if (is_meson_rev_a() && is_meson_tm2_cpu())
+			offset = 0;
+		else if (get_cpu_type() == MESON_CPU_MAJOR_ID_SC2)
+			offset = 0x1200;
+		else
+			offset = 0x1300;
+	}
 	if  (dnlp_sel == NEW_DNLP_IN_SHARPNESS) {
 		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu()) {
 			for (i = 0; i < 16; i++)
 				WRITE_VPP_REG(SRSHARP1_DNLP_00 + i,
 					ve_dnlp_reg[i]);
-		} else if (is_meson_tl1_cpu()) {
+		} else if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
+			if (vinfo->viu_color_fmt != COLOR_FMT_RGB444)
+				dnlp_reg = SHARP0_DNLP_00 + offset;
+			else
+				dnlp_reg = SHARP1_DNLP_00 + offset;
+
 			for (i = 0; i < 32; i++)
-				WRITE_VPP_REG(SHARP1_DNLP_00 + i,
+				WRITE_VPP_REG(
+					dnlp_reg + i,
 					ve_dnlp_reg_v2[i]);
 		} else {
 			for (i = 0; i < 16; i++)
@@ -270,18 +313,36 @@ void ve_on_vs(struct vframe_s *vf)
 /* *********************************************************************** */
 /* *** IOCTL-oriented functions ****************************************** */
 /* *********************************************************************** */
-
-void vpp_enable_lcd_gamma_table(void)
+int vpp_get_encl_viu_mux(void)
 {
-	VSYNC_WR_MPEG_REG_BITS(L_GAMMA_CNTL_PORT, 1, GAMMA_EN, 1);
+	unsigned int temp;
+
+	temp = READ_VPP_REG(VPU_VIU_VENC_MUX_CTRL);
+	if ((temp & 0x3) == 0)
+		return 1;
+	if (((temp >> 2) & 0x3) == 0)
+		return 2;
+
+	return 0;
 }
 
-void vpp_disable_lcd_gamma_table(void)
+void vpp_enable_lcd_gamma_table(int viu_sel)
 {
-	VSYNC_WR_MPEG_REG_BITS(L_GAMMA_CNTL_PORT, 0, GAMMA_EN, 1);
+	if (viu_sel == 1) /* viu1 vsync rdma */
+		VSYNC_WR_MPEG_REG_BITS(L_GAMMA_CNTL_PORT, 1, GAMMA_EN, 1);
+	else
+		WRITE_VPP_REG_BITS(L_GAMMA_CNTL_PORT, 1, GAMMA_EN, 1);
 }
 
-void vpp_set_lcd_gamma_table(u16 *data, u32 rgb_mask)
+void vpp_disable_lcd_gamma_table(int viu_sel)
+{
+	if (viu_sel == 1) /* viu1 vsync rdma */
+		VSYNC_WR_MPEG_REG_BITS(L_GAMMA_CNTL_PORT, 0, GAMMA_EN, 1);
+	else
+		WRITE_VPP_REG_BITS(L_GAMMA_CNTL_PORT, 0, GAMMA_EN, 1);
+}
+
+void vpp_set_lcd_gamma_table(u16 *data, u32 rgb_mask, int viu_sel)
 {
 	int i;
 	int cnt = 0;
@@ -292,8 +353,8 @@ void vpp_set_lcd_gamma_table(u16 *data, u32 rgb_mask)
 
 	spin_lock_irqsave(&vpp_lcd_gamma_lock, flags);
 
-	WRITE_VPP_REG_BITS(L_GAMMA_CNTL_PORT,
-				0, GAMMA_EN, 1);
+	if (gamma_loadprotect_en)
+		WRITE_VPP_REG_BITS(L_GAMMA_CNTL_PORT, 0, GAMMA_EN, 1);
 
 	while (!(READ_VPP_REG(L_GAMMA_CNTL_PORT) & (0x1 << ADR_RDY))) {
 		udelay(10);
@@ -322,8 +383,15 @@ void vpp_set_lcd_gamma_table(u16 *data, u32 rgb_mask)
 				    (0x1 << rgb_mask)   |
 				    (0x23 << HADR));
 
-	VSYNC_WR_MPEG_REG_BITS(L_GAMMA_CNTL_PORT,
-					gamma_en, GAMMA_EN, 1);
+	if (gamma_loadprotect_en) {
+		if (viu_sel == 1) { /* viu1 vsync rdma */
+			VSYNC_WR_MPEG_REG_BITS(L_GAMMA_CNTL_PORT,
+					       gamma_en, GAMMA_EN, 1);
+		} else { /* viu2 directly write, rdma todo */
+			WRITE_VPP_REG_BITS(L_GAMMA_CNTL_PORT,
+					   gamma_en, GAMMA_EN, 1);
+		}
+	}
 
 	spin_unlock_irqrestore(&vpp_lcd_gamma_lock, flags);
 }
@@ -340,22 +408,32 @@ void vpp_get_lcd_gamma_table(u32 rgb_mask)
 		return;
 	pr_info("read gamma begin\n");
 	while (!(READ_VPP_REG(L_GAMMA_CNTL_PORT) & (0x1 << ADR_RDY))) {
-		udelay(10);
+		usleep_range(10, 12);
 		if (cnt++ > GAMMA_RETRY)
 			break;
 	}
 	cnt = 0;
 	for (i = 0; i < 256; i++) {
 		cnt = 0;
+		while (!(READ_VPP_REG(L_GAMMA_CNTL_PORT) & (0x1 << ADR_RDY))) {
+			usleep_range(10, 12);
+			if (cnt++ > GAMMA_RETRY) {
+				pr_info("%s ADR_RDY timeout\n", __func__);
+				break;
+			}
+		}
 		WRITE_VPP_REG(L_GAMMA_ADDR_PORT, (0x1 << H_RD) |
 						(0x0 << H_AUTO_INC) |
 						(0x1 << rgb_mask)	|
 						(i << HADR));
 
+		cnt = 0;
 		while (!(READ_VPP_REG(L_GAMMA_CNTL_PORT) & (0x1 << RD_RDY))) {
-			udelay(10);
-			if (cnt++ > GAMMA_RETRY)
+			usleep_range(10, 12);
+			if (cnt++ > GAMMA_RETRY) {
+				pr_info("%s ADR_RDY timeout\n", __func__);
 				break;
+			}
 		}
 		if (rgb_mask == H_SEL_R)
 			gamma_data_r[i] = READ_VPP_REG(L_GAMMA_DATA_PORT);
@@ -433,6 +511,19 @@ static int bypass_coeff[MATRIX_5x3_COEF_SIZE] = {
 	0, 0, 0, /* 20'/21'/22' */
 	0, 0, 0, /* offset */
 	0, 0, 0 /* mode, right_shift, clip_en */
+};
+
+#define MTX_RS 0
+#define MTX_ENABLE 1
+#define MATRIX_3x3_COEF_SIZE 17
+static int matrix_yuv_bypass_coef[MATRIX_3x3_COEF_SIZE] = {
+	-64, -512, -512,
+	COEFF_NORM(1.0), COEFF_NORM(0), COEFF_NORM(0),
+	COEFF_NORM(0), COEFF_NORM(1.0), COEFF_NORM(0),
+	COEFF_NORM(0), COEFF_NORM(0), COEFF_NORM(1.0),
+	64, 512, 512,
+	MTX_RS,
+	MTX_ENABLE
 };
 
 void vpp_set_rgb_ogo(struct tcon_rgb_ogo_s *p)
@@ -616,35 +707,54 @@ void vpp_set_rgb_ogo(struct tcon_rgb_ogo_s *p)
 
 void ve_enable_dnlp(void)
 {
+	struct vinfo_s *vinfo = get_current_vinfo();
+
 	ve_en = 1;
-/* #ifdef NEW_DNLP_IN_SHARPNESS */
-/* if(dnlp_sel == NEW_DNLP_IN_SHARPNESS){ */
 	if (dnlp_sel == NEW_DNLP_IN_SHARPNESS) {
-		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu())
+		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu()) {
 			WRITE_VPP_REG_BITS(SRSHARP1_DNLP_EN, 1, 0, 1);
-		else if (is_meson_tl1_cpu() || is_meson_tm2_cpu())
-			WRITE_VPP_REG_BITS(SHARP1_DNLP_EN, 1, 0, 1);
-		else
+		} else if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
+			if (vinfo->viu_color_fmt != COLOR_FMT_RGB444)
+				WRITE_VPP_REG_BITS(
+					SRSHARP0_DNLP_EN + sr_offset[0],
+					1, 0, 1);
+			else
+				WRITE_VPP_REG_BITS(
+					SRSHARP1_DNLP_EN + sr_offset[1],
+					1, 0, 1);
+		} else {
 			WRITE_VPP_REG_BITS(SRSHARP0_DNLP_EN, 1, 0, 1);
-	} else
-		/* #endif */
+		}
+	} else {
 		WRITE_VPP_REG_BITS(VPP_VE_ENABLE_CTRL,
 				1, DNLP_EN_BIT, DNLP_EN_WID);
+	}
 }
 
 void ve_disable_dnlp(void)
 {
+	struct vinfo_s *vinfo = get_current_vinfo();
+
 	ve_en = 0;
-	if (dnlp_sel == NEW_DNLP_IN_SHARPNESS)
-		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu())
+	if (dnlp_sel == NEW_DNLP_IN_SHARPNESS) {
+		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu()) {
 			WRITE_VPP_REG_BITS(SRSHARP1_DNLP_EN, 0, 0, 1);
-		else if (is_meson_tl1_cpu() || is_meson_tm2_cpu())
-			WRITE_VPP_REG_BITS(SHARP1_DNLP_EN, 0, 0, 1);
-		else
+		} else if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
+			if (vinfo->viu_color_fmt != COLOR_FMT_RGB444)
+				WRITE_VPP_REG_BITS(
+					SRSHARP0_DNLP_EN + sr_offset[0],
+					0, 0, 1);
+			else
+				WRITE_VPP_REG_BITS(
+					SRSHARP1_DNLP_EN + sr_offset[1],
+					0, 0, 1);
+		} else {
 			WRITE_VPP_REG_BITS(SRSHARP0_DNLP_EN, 0, 0, 1);
-	else
+		}
+	} else {
 		WRITE_VPP_REG_BITS(VPP_VE_ENABLE_CTRL,
 				0, DNLP_EN_BIT, DNLP_EN_WID);
+	}
 }
 
 void ve_set_dnlp_2(void)
@@ -657,6 +767,7 @@ void ve_set_dnlp_2(void)
 	/* init tgt & lpf */
 	for (i = 0; i < 64; i++) {
 		ve_dnlp_tgt_copy[i] = i << 2;
+		ve_dnlp_tgt_10b_copy[i] = i << 4;
 		ve_dnlp_lpf[i] = (ulong)ve_dnlp_tgt_copy[i] << ve_dnlp_rt;
 	}
 	/* calculate dnlp reg data */
@@ -778,29 +889,36 @@ void ve_lc_latch_process(void)
 
 void ve_lcd_gamma_process(void)
 {
+	int viu_sel;
+
+	viu_sel = vpp_get_encl_viu_mux();
+
 	if (vecm_latch_flag & FLAG_GAMMA_TABLE_EN) {
 		vecm_latch_flag &= ~FLAG_GAMMA_TABLE_EN;
-		vpp_enable_lcd_gamma_table();
+		vpp_enable_lcd_gamma_table(viu_sel);
 		pr_amve_dbg("\n[amve..] set vpp_enable_lcd_gamma_table OK!!!\n");
 	}
 	if (vecm_latch_flag & FLAG_GAMMA_TABLE_DIS) {
 		vecm_latch_flag &= ~FLAG_GAMMA_TABLE_DIS;
-		vpp_disable_lcd_gamma_table();
+		vpp_disable_lcd_gamma_table(viu_sel);
 		pr_amve_dbg("\n[amve..] set vpp_disable_lcd_gamma_table OK!!!\n");
 	}
 	if (vecm_latch_flag & FLAG_GAMMA_TABLE_R) {
 		vecm_latch_flag &= ~FLAG_GAMMA_TABLE_R;
-		vpp_set_lcd_gamma_table(video_gamma_table_r.data, H_SEL_R);
+		vpp_set_lcd_gamma_table(video_gamma_table_r.data, H_SEL_R,
+					viu_sel);
 		pr_amve_dbg("\n[amve..] set vpp_set_lcd_gamma_table OK!!!\n");
 	}
 	if (vecm_latch_flag & FLAG_GAMMA_TABLE_G) {
 		vecm_latch_flag &= ~FLAG_GAMMA_TABLE_G;
-		vpp_set_lcd_gamma_table(video_gamma_table_g.data, H_SEL_G);
+		vpp_set_lcd_gamma_table(video_gamma_table_g.data, H_SEL_G,
+					viu_sel);
 		pr_amve_dbg("\n[amve..] set vpp_set_lcd_gamma_table OK!!!\n");
 	}
 	if (vecm_latch_flag & FLAG_GAMMA_TABLE_B) {
 		vecm_latch_flag &= ~FLAG_GAMMA_TABLE_B;
-		vpp_set_lcd_gamma_table(video_gamma_table_b.data, H_SEL_B);
+		vpp_set_lcd_gamma_table(video_gamma_table_b.data, H_SEL_B,
+					viu_sel);
 		pr_amve_dbg("\n[amve..] set vpp_set_lcd_gamma_table OK!!!\n");
 	}
 	if (vecm_latch_flag & FLAG_RGB_OGO) {
@@ -809,23 +927,23 @@ void ve_lcd_gamma_process(void)
 			if (video_rgb_ogo.en) {
 				vpp_set_lcd_gamma_table(
 						video_gamma_table_r_adj.data,
-						H_SEL_R);
+						H_SEL_R, viu_sel);
 				vpp_set_lcd_gamma_table(
 						video_gamma_table_g_adj.data,
-						H_SEL_G);
+						H_SEL_G, viu_sel);
 				vpp_set_lcd_gamma_table(
 						video_gamma_table_b_adj.data,
-						H_SEL_B);
+						H_SEL_B, viu_sel);
 			} else {
 				vpp_set_lcd_gamma_table(
 						video_gamma_table_r.data,
-						H_SEL_R);
+						H_SEL_R, viu_sel);
 				vpp_set_lcd_gamma_table(
 						video_gamma_table_g.data,
-						H_SEL_G);
+						H_SEL_G, viu_sel);
 				vpp_set_lcd_gamma_table(
 						video_gamma_table_b.data,
-						H_SEL_B);
+						H_SEL_B, viu_sel);
 			}
 			pr_amve_dbg("\n[amve..] set vpp_set_lcd_gamma_table OK!!!\n");
 		} else {
@@ -834,6 +952,7 @@ void ve_lcd_gamma_process(void)
 		}
 	}
 }
+
 void lvds_freq_process(void)
 {
 /* #if ((MESON_CPU_TYPE==MESON_CPU_TYPE_MESON6TV)|| */
@@ -1006,52 +1125,138 @@ void vpp_vd1_mtx_rgb_contrast(signed int cont_val, struct vframe_s *vf)
 		return;
 	cont_val = cont_val + 1024;
 	/*close rgb contrast protect*/
-	WRITE_VPP_REG_BITS(XVYCC_VD1_RGB_CTRST, 0, 0, 1);
+	VSYNC_WR_MPEG_REG_BITS(XVYCC_VD1_RGB_CTRST, 0, 0, 1);
 	/*VPP_VADJ_CTRL bit 1 on for rgb contrast adj*/
 	rgb_con_en = READ_VPP_REG_BITS(XVYCC_VD1_RGB_CTRST, 1, 1);
 	if (!rgb_con_en)
-		WRITE_VPP_REG_BITS(XVYCC_VD1_RGB_CTRST, 1, 1, 1);
+		VSYNC_WR_MPEG_REG_BITS(XVYCC_VD1_RGB_CTRST, 1, 1, 1);
 
 	/*select full or limit range setting*/
 	con_minus_value = READ_VPP_REG_BITS(XVYCC_VD1_RGB_CTRST, 4, 10);
 	if (vf->source_type == VFRAME_SOURCE_TYPE_OTHERS) {
 		if (con_minus_value != 64)
-			WRITE_VPP_REG_BITS(XVYCC_VD1_RGB_CTRST, 64, 4, 10);
+			VSYNC_WR_MPEG_REG_BITS(XVYCC_VD1_RGB_CTRST, 64, 4, 10);
 	} else {
 		if (con_minus_value != 0)
-			WRITE_VPP_REG_BITS(XVYCC_VD1_RGB_CTRST, 0, 4, 10);
+			VSYNC_WR_MPEG_REG_BITS(XVYCC_VD1_RGB_CTRST, 0, 4, 10);
 	}
 
 	vd1_contrast = (READ_VPP_REG(XVYCC_VD1_RGB_CTRST) & 0xf000ffff) |
 					(cont_val << 16);
 
-	WRITE_VPP_REG(XVYCC_VD1_RGB_CTRST, vd1_contrast);
+	VSYNC_WR_MPEG_REG(XVYCC_VD1_RGB_CTRST, vd1_contrast);
 }
 
+void vpp_contrast_adj_by_uv(int cont_u, int cont_v)
+{
+	unsigned int coef00 = 0;
+	unsigned int coef01 = 0;
+	unsigned int coef02 = 0;
+	unsigned int coef10 = 0;
+	unsigned int coef11 = 0;
+	unsigned int coef12 = 0;
+	unsigned int coef20 = 0;
+	unsigned int coef21 = 0;
+	unsigned int coef22 = 0;
+	unsigned int offst0 = 0;
+	unsigned int offst1 = 0;
+	unsigned int offst2 = 0;
+	unsigned int pre_offst0 = 0;
+	unsigned int pre_offst1 = 0;
+	unsigned int pre_offst2 = 0;
+	unsigned int rs = 0;
+	unsigned int en = 0;
+
+	coef00 = matrix_yuv_bypass_coef[3];
+	coef01 = matrix_yuv_bypass_coef[4];
+	coef02 = matrix_yuv_bypass_coef[5];
+	coef10 = matrix_yuv_bypass_coef[6];
+	coef11 = cont_u;
+	coef12 = matrix_yuv_bypass_coef[8];
+	coef20 = matrix_yuv_bypass_coef[9];
+	coef21 = matrix_yuv_bypass_coef[10];
+	coef22 = cont_v;
+	pre_offst0 = matrix_yuv_bypass_coef[0];
+	pre_offst1 = matrix_yuv_bypass_coef[1];
+	pre_offst2 = matrix_yuv_bypass_coef[2];
+	offst0 = matrix_yuv_bypass_coef[12];
+	offst1 = matrix_yuv_bypass_coef[13];
+	offst2 = matrix_yuv_bypass_coef[14];
+	rs = matrix_yuv_bypass_coef[15];
+	en = matrix_yuv_bypass_coef[16];
+
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_COEF00_01,
+		((coef00 & 0x1fff) << 16) | (coef01 & 0x1fff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_COEF02_10,
+		((coef02 & 0x1fff) << 16) | (coef10 & 0x1fff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_COEF11_12,
+		((coef11 & 0x1fff) << 16) | (coef12 & 0x1fff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_COEF20_21,
+		((coef20 & 0x1fff) << 16) | (coef21 & 0x1fff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_COEF22,
+		(coef22 & 0x1fff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_OFFSET0_1,
+		((offst0 & 0xfff) << 16) | (offst1 & 0xfff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_OFFSET2,
+		(offst2 & 0xfff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_PRE_OFFSET0_1,
+		((pre_offst0 & 0xfff) << 16) |
+		(pre_offst1 & 0xfff));
+	VSYNC_WR_MPEG_REG(
+		VPP_VD1_MATRIX_PRE_OFFSET2,
+		(pre_offst2 & 0xfff));
+
+	VSYNC_WR_MPEG_REG_BITS(VPP_VD1_MATRIX_CLIP, rs, 5, 3);
+	VSYNC_WR_MPEG_REG_BITS(VPP_VD1_MATRIX_EN_CTRL, en, 0, 1);
+}
 /*for gxbbtv contrast adj in vadj1*/
 void vpp_vd_adj1_contrast(signed int cont_val, struct vframe_s *vf)
 {
 	unsigned int vd1_contrast;
 	unsigned int vdj1_ctl;
+	int contrast_uv;
+	int contrast_u;
+	int contrast_v;
 
 	if ((cont_val > 1023) || (cont_val < -1024))
 		return;
+	contrast_uv = cont_val + 1024;
 	cont_val = ((cont_val + 1024) >> 3);
+
+	if (contrast_uv < 1024) {
+		contrast_u = contrast_uv;
+		contrast_v = contrast_uv;
+	} else {
+		contrast_u = (0x600 - 0x400) * (contrast_uv - 0x400) / 0x400
+			+ 0x400;
+		contrast_v = contrast_uv;
+	}
+
 	/*VPP_VADJ_CTRL bit 1 off for contrast adj*/
 	vdj1_ctl = READ_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 1);
 	if (is_meson_gxtvbb_cpu()) {
 		if (vf->source_type == VFRAME_SOURCE_TYPE_OTHERS) {
 			if (!vdj1_ctl)
-				WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 1, 1);
+				VSYNC_WR_MPEG_REG_BITS(VPP_VADJ_CTRL, 1, 1, 1);
 		} else {
 			if (vdj1_ctl)
-				WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 0, 1, 1);
+				VSYNC_WR_MPEG_REG_BITS(VPP_VADJ_CTRL, 0, 1, 1);
 		}
 	}
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		vd1_contrast = (READ_VPP_REG(VPP_VADJ1_Y_2) & 0x7ff00) |
 						(cont_val << 0);
-		WRITE_VPP_REG(VPP_VADJ1_Y_2, vd1_contrast);
+		VSYNC_WR_MPEG_REG_BITS(VPP_VADJ1_Y_2, cont_val, 0, 8);
+
+		vpp_contrast_adj_by_uv(contrast_u, contrast_v);
 		return;
 	} else if (get_cpu_type() > MESON_CPU_MAJOR_ID_GXTVBB) {
 		vd1_contrast = (READ_VPP_REG(VPP_VADJ1_Y) & 0x3ff00) |
@@ -1060,7 +1265,7 @@ void vpp_vd_adj1_contrast(signed int cont_val, struct vframe_s *vf)
 		vd1_contrast = (READ_VPP_REG(VPP_VADJ1_Y) & 0x1ff00) |
 						(cont_val << 0);
 	}
-	WRITE_VPP_REG(VPP_VADJ1_Y, vd1_contrast);
+	VSYNC_WR_MPEG_REG_BITS(VPP_VADJ1_Y, cont_val, 0, 8);
 }
 
 void vpp_vd_adj1_brightness(signed int bri_val, struct vframe_s *vf)
@@ -1084,13 +1289,13 @@ void vpp_vd_adj1_brightness(signed int bri_val, struct vframe_s *vf)
 		vd1_brightness = (READ_VPP_REG(VPP_VADJ1_Y_2) & 0xff) |
 			(bri_val << 8);
 
-		WRITE_VPP_REG(VPP_VADJ1_Y_2, vd1_brightness);
+		VSYNC_WR_MPEG_REG_BITS(VPP_VADJ1_Y_2, bri_val, 8, 11);
 	} else if (get_cpu_type() > MESON_CPU_MAJOR_ID_GXTVBB) {
 		bri_val = bri_val >> 1;
 		vd1_brightness = (READ_VPP_REG(VPP_VADJ1_Y) & 0xff) |
 			(bri_val << 8);
 
-		WRITE_VPP_REG(VPP_VADJ1_Y, vd1_brightness);
+		VSYNC_WR_MPEG_REG_BITS(VPP_VADJ1_Y, bri_val, 8, 10);
 	} else {
 		if ((vf->source_type == VFRAME_SOURCE_TYPE_TUNER) ||
 			(vf->source_type == VFRAME_SOURCE_TYPE_CVBS) ||
@@ -1325,9 +1530,6 @@ void amvecm_3d_sync_process(void)
 #define SR_NOSCALE_LEVEL 0x10
 static void amve_sr_reg_setting(unsigned int adaptive_level)
 {
-	if (is_meson_g12a_cpu() || is_meson_g12b_cpu() ||
-		is_meson_sm1_cpu())
-		goto g12_sr_reg_setting;
 	if (adaptive_level & SR_SD_SCALE_LEVEL)
 		am_set_regmap(&sr1reg_sd_scale);
 	else if (adaptive_level & SR_HD_SCALE_LEVEL)
@@ -1344,12 +1546,6 @@ static void amve_sr_reg_setting(unsigned int adaptive_level)
 		am_set_regmap(&sr1reg_cvbs);
 	else if (adaptive_level & SR_NOSCALE_LEVEL)
 		am_set_regmap(&sr1reg_hv_noscale);
-	return;
-g12_sr_reg_setting:
-	/*for g12a and g12b, load sr0 cvbs table when output cvbs mode*/
-	if (adaptive_level & SR_CVBS_LEVEL)
-		am_set_regmap(&sr0reg_cvbs);
-	return;
 }
 void amve_sharpness_adaptive_setting(struct vframe_s *vf,
 	 unsigned int sps_h_en, unsigned int sps_v_en)
@@ -1424,8 +1620,6 @@ void amvecm_fresh_overscan(struct vframe_s *vf)
 
 	if (overscan_disable)
 		return;
-	if (is_dolby_vision_on())
-		return;
 
 	if (overscan_table[0].load_flag) {
 		height = (vf->type & VIDTYPE_COMPRESS) ?
@@ -1446,16 +1640,26 @@ void amvecm_fresh_overscan(struct vframe_s *vf)
 		vf->pic_mode.AFD_enable =
 			overscan_table[overscan_timing].afd_enable;
 		/*local play screen mode set by decoder*/
-		if (overscan_table[0].source == SOURCE_MPEG)
-			vf->pic_mode.screen_mode = 0xff;
-		else
-			vf->pic_mode.screen_mode =
-				overscan_table[overscan_timing].screen_mode;
+		if (!(vf->pic_mode.screen_mode == VIDEO_WIDEOPTION_CUSTOM &&
+		      vf->pic_mode.AFD_enable)) {
+			if (overscan_table[0].source == SOURCE_MPEG)
+				vf->pic_mode.screen_mode = 0xff;
+			else
+				vf->pic_mode.screen_mode = overscan_screen_mode;
+		}
 
-		vf->pic_mode.hs = overscan_table[overscan_timing].hs;
-		vf->pic_mode.he = overscan_table[overscan_timing].he;
-		vf->pic_mode.vs = overscan_table[overscan_timing].vs;
-		vf->pic_mode.ve = overscan_table[overscan_timing].ve;
+		if (vf->pic_mode.provider == PIC_MODE_PROVIDER_WSS &&
+		    vf->pic_mode.AFD_enable) {
+			vf->pic_mode.hs += overscan_table[overscan_timing].hs;
+			vf->pic_mode.he += overscan_table[overscan_timing].he;
+			vf->pic_mode.vs += overscan_table[overscan_timing].vs;
+			vf->pic_mode.ve += overscan_table[overscan_timing].ve;
+		} else {
+			vf->pic_mode.hs = overscan_table[overscan_timing].hs;
+			vf->pic_mode.he = overscan_table[overscan_timing].he;
+			vf->pic_mode.vs = overscan_table[overscan_timing].vs;
+			vf->pic_mode.ve = overscan_table[overscan_timing].ve;
+		}
 		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
 	}
 	if (overscan_table[offset].load_flag) {
@@ -1483,11 +1687,23 @@ void amvecm_fresh_overscan(struct vframe_s *vf)
 			overscan_table[overscan_timing].screen_mode;
 		vf->pic_mode.AFD_enable =
 			overscan_table[overscan_timing].afd_enable;
-		vf->pic_mode.screen_mode = overscan_screen_mode;
-		vf->pic_mode.hs = overscan_table[overscan_timing].hs;
-		vf->pic_mode.he = overscan_table[overscan_timing].he;
-		vf->pic_mode.vs = overscan_table[overscan_timing].vs;
-		vf->pic_mode.ve = overscan_table[overscan_timing].ve;
+
+		if (!(vf->pic_mode.screen_mode == VIDEO_WIDEOPTION_CUSTOM &&
+		      vf->pic_mode.AFD_enable))
+			vf->pic_mode.screen_mode = overscan_screen_mode;
+
+		if (vf->pic_mode.provider == PIC_MODE_PROVIDER_WSS &&
+		    vf->pic_mode.AFD_enable) {
+			vf->pic_mode.hs += overscan_table[overscan_timing].hs;
+			vf->pic_mode.he += overscan_table[overscan_timing].he;
+			vf->pic_mode.vs += overscan_table[overscan_timing].vs;
+			vf->pic_mode.ve += overscan_table[overscan_timing].ve;
+		} else {
+			vf->pic_mode.hs = overscan_table[overscan_timing].hs;
+			vf->pic_mode.he = overscan_table[overscan_timing].he;
+			vf->pic_mode.vs = overscan_table[overscan_timing].vs;
+			vf->pic_mode.ve = overscan_table[overscan_timing].ve;
+		}
 		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
 	}
 }
@@ -1681,4 +1897,272 @@ void dump_plut3d_reg_table(void)
 	}
 }
 
+void set_gamma_regs(int en, int sel)
+{
+	int i;
+	int *gamma_lut = NULL;
 
+	static int gamma_lut_default[66] =  {
+	0, 0, 0, 1, 2, 4, 6, 8, 11, 14, 17, 21, 26, 31,
+	36, 42, 49, 55, 63, 71, 79, 88, 98, 108, 118,
+	129, 141, 153, 166, 179, 193, 208, 223, 238,
+	255, 271, 289, 307, 325, 344, 364, 384, 405,
+	427, 449, 472, 495, 519, 544, 569, 595, 621,
+	649, 676, 705, 734, 763, 794, 825, 856, 888,
+	921, 955, 989, 1023, 0};
+
+	static int gamma_lut_straight[66] =  {
+	 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160,
+	 176, 192, 208, 224, 240, 256, 272, 288, 304, 320,
+	 336, 352, 368, 384, 400, 416, 432, 448, 464, 480,
+	 496, 512, 528, 544, 560, 576, 592, 608, 624, 640,
+	 656, 672, 688, 704, 720, 736, 752, 768, 784, 800,
+	 816, 832, 848, 864, 880, 896, 912, 928, 944, 960,
+	 976, 992, 1008, 1023, 0};
+
+	if (!sel)
+		gamma_lut = gamma_lut_default;
+	else
+		gamma_lut = gamma_lut_straight;
+
+	if (en) {
+		WRITE_VPP_REG(VPP_GAMMA_BIN_ADDR, 0);
+		for (i = 0; i < 33; i = i + 1)
+			WRITE_VPP_REG(VPP_GAMMA_BIN_DATA,
+				(((gamma_lut[i*2+1]<<2)&0xffff)<<16 |
+					((gamma_lut[i*2]<<2)&0xffff)));
+		for (i = 0; i < 33; i = i + 1)
+			WRITE_VPP_REG(VPP_GAMMA_BIN_DATA,
+				(((gamma_lut[i*2+1]<<2)&0xffff)<<16 |
+					((gamma_lut[i*2]<<2)&0xffff)));
+		for (i = 0; i < 33; i = i + 1)
+			WRITE_VPP_REG(VPP_GAMMA_BIN_DATA,
+				(((gamma_lut[i*2+1]<<2)&0xffff)<<16 |
+					((gamma_lut[i*2]<<2)&0xffff)));
+		WRITE_VPP_REG_BITS(VPP_GAMMA_CTRL, 0x1, 0, 1);
+	}
+}
+
+void amvecm_wb_enable(int enable)
+{
+	if (enable) {
+		wb_en = 1;
+		if (video_rgb_ogo_xvy_mtx)
+			WRITE_VPP_REG_BITS(VPP_MATRIX_CTRL, 1, 6, 1);
+		else
+			WRITE_VPP_REG_BITS(VPP_GAINOFF_CTRL0, 1, 31, 1);
+	} else {
+		wb_en = 0;
+		if (video_rgb_ogo_xvy_mtx)
+			WRITE_VPP_REG_BITS(VPP_MATRIX_CTRL, 0, 6, 1);
+		else
+			WRITE_VPP_REG_BITS(VPP_GAINOFF_CTRL0, 0, 31, 1);
+	}
+}
+
+int vpp_pq_ctrl_config(struct pq_ctrl_s pq_cfg)
+{
+	VSYNC_WR_MPEG_REG_BITS(
+		SRSHARP0_PK_NR_ENABLE + sr_offset[0],
+		pq_cfg.sharpness0_en, 1, 1);
+
+	VSYNC_WR_MPEG_REG_BITS(
+		SRSHARP1_PK_NR_ENABLE + sr_offset[1],
+		pq_cfg.sharpness1_en, 1, 1);
+
+	if (pq_cfg.dnlp_en) {
+		ve_enable_dnlp();
+		dnlp_en = 1;
+	} else {
+		ve_disable_dnlp();
+		dnlp_en = 0;
+	}
+
+	if (pq_cfg.cm_en) {
+		amcm_enable();
+		cm_en = 1;
+	} else {
+		amcm_disable();
+		cm_en = 0;
+	}
+
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
+		VSYNC_WR_MPEG_REG_BITS(
+			VPP_VADJ1_MISC,
+			pq_cfg.vadj1_en, 0, 1);
+	else
+		VSYNC_WR_MPEG_REG_BITS(
+			VPP_VADJ_CTRL,
+			pq_cfg.vadj1_en, 0, 1);
+
+	VSYNC_WR_MPEG_REG_BITS(
+		VPP_VD1_RGB_CTRST,
+		pq_cfg.vd1_ctrst_en, 1, 1);
+
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
+		VSYNC_WR_MPEG_REG_BITS(
+			VPP_VADJ2_MISC,
+			pq_cfg.vadj2_en, 0, 1);
+	else
+		VSYNC_WR_MPEG_REG_BITS(
+			VPP_VADJ_CTRL,
+			pq_cfg.vadj2_en, 2, 1);
+
+	VSYNC_WR_MPEG_REG_BITS(
+		VPP_POST_RGB_CTRST,
+		pq_cfg.post_ctrst_en, 1, 1);
+
+	amvecm_wb_enable(pq_cfg.wb_en);
+
+	gamma_en = pq_cfg.gamma_en;
+	VSYNC_WR_MPEG_REG_BITS(
+		L_GAMMA_CNTL_PORT,
+		pq_cfg.gamma_en, GAMMA_EN, 1);
+
+	if (pq_cfg.lc_en) {
+		lc_en = 1;
+	} else {
+		lc_en = 0;
+		if (is_meson_tl1_cpu() ||
+		    is_meson_tm2_cpu())
+			lc_disable();
+	}
+
+	VSYNC_WR_MPEG_REG_BITS(
+		VPP_VE_ENABLE_CTRL,
+		pq_cfg.black_ext_en, 3, 1);
+
+	VSYNC_WR_MPEG_REG_BITS(
+		VPP_VE_ENABLE_CTRL,
+		pq_cfg.chroma_cor_en, 4, 1);
+
+	return 0;
+}
+
+unsigned int skip_pq_ctrl_load(struct am_reg_s *p)
+{
+	unsigned int ret = 0;
+	struct pq_ctrl_s cfg;
+
+	if (dv_pq_bypass == 2) {
+		memcpy(&cfg, &dv_cfg_bypass, sizeof(struct pq_ctrl_s));
+		cfg.vadj1_en = pq_cfg.vadj1_en;
+	} else if (dv_pq_bypass == 1) {
+		memcpy(&cfg, &dv_cfg_bypass, sizeof(struct pq_ctrl_s));
+	} else {
+		memcpy(&cfg, &pq_cfg, sizeof(struct pq_ctrl_s));
+	}
+
+	if (!cfg.sharpness0_en) {
+		if (p->addr ==
+			(SRSHARP0_PK_NR_ENABLE + sr_offset[0])) {
+			ret |= 1 << 1;
+			return ret;
+		}
+	}
+
+	if (!cfg.sharpness1_en) {
+		if (p->addr ==
+			(SRSHARP1_PK_NR_ENABLE + sr_offset[1])) {
+			ret |= 1 << 1;
+			return ret;
+		}
+	}
+
+	if (!cfg.cm_en) {
+		if (p->addr == 0x208) {
+			if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
+				ret |= 1 << 0;
+			else
+				ret |= 1 << 1;
+			return ret;
+		}
+	}
+
+	if (!cfg.vadj1_en) {
+		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
+			if (p->addr == VPP_VADJ1_MISC) {
+				ret |= 1 << 0;
+				return ret;
+			}
+		} else {
+			if (p->addr == VPP_VADJ_CTRL) {
+				ret |= 1 << 0;
+				return ret;
+			}
+		}
+	}
+
+	if (!cfg.vd1_ctrst_en) {
+		if (p->addr == VPP_VD1_RGB_CTRST) {
+			ret |= 1 << 1;
+			return ret;
+		}
+	}
+
+	if (!cfg.vadj2_en) {
+		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
+			if (p->addr == VPP_VADJ2_MISC) {
+				ret |= 1 << 0;
+				return ret;
+			}
+		} else {
+			if (p->addr == VPP_VADJ2_Y) {
+				ret |= 1 << 0;
+				return ret;
+			}
+		}
+	}
+
+	if (!cfg.post_ctrst_en) {
+		if (p->addr == VPP_POST_RGB_CTRST) {
+			ret |= 1 << 1;
+			return ret;
+		}
+	}
+
+	if (p->addr == VPP_VE_ENABLE_CTRL) {
+		if (!cfg.black_ext_en)
+			ret |= 1 << 3;
+		if (!cfg.chroma_cor_en)
+			ret |= 1 << 4;
+		return ret;
+	}
+
+	return ret;
+}
+
+int dv_pq_ctl(enum dv_pq_ctl_e ctl)
+{
+	struct pq_ctrl_s cfg;
+
+	switch (ctl) {
+	case DV_PQ_BYPASS:
+		memcpy(&cfg, &dv_cfg_bypass, sizeof(struct pq_ctrl_s));
+		cfg.vadj1_en = pq_cfg.vadj1_en;
+		vpp_pq_ctrl_config(cfg);
+		dv_pq_bypass = 2;
+		pr_amve_dbg(
+			"dv enable, pq disable, dv_pq_bypass = %d\n",
+			dv_pq_bypass);
+		break;
+	case DV_PQ_CERT:
+		vpp_pq_ctrl_config(dv_cfg_bypass);
+		dv_pq_bypass = 1;
+		pr_amve_dbg(
+			"dv certification mode, pq disable, dv_pq_bypass = %d\n",
+			dv_pq_bypass);
+		break;
+	case DV_PQ_REC:
+		vpp_pq_ctrl_config(pq_cfg);
+		dv_pq_bypass = 0;
+		pr_amve_dbg(
+			"dv disable, pq recovery, dv_pq_bypass = %d\n",
+			dv_pq_bypass);
+		break;
+	default:
+		break;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(dv_pq_ctl);

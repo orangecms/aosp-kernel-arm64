@@ -45,9 +45,10 @@
 		ramoops@0x07400000 {
 			compatible = "ramoops";
 			reg = <0x0 0x07400000 0x0 0x00100000>;
-			record-size = <0x8000>;
-			console-size = <0x8000>;
-			ftrace-size = <0x20000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x80000>;
+			pmsg-size = <0x20000>;
 		};
 
 		secmon_reserved:linux,secmon {
@@ -74,6 +75,14 @@
 			alloc-ranges = <0x0 0x3e000000 0x0 0x2000000>;
 		};
 	};
+
+	cma_shrinker {
+		compatible = "amlogic, cma-shrinker";
+		status = "okay";
+		adj  = <0 100 200 250 900 950>;
+		free = <7680 24288 28528 32600 32768 36624>;
+	};
+
 	mtd_nand {
 		compatible = "amlogic, aml_mtd_nand";
 		dev_name = "mtdnand";
@@ -85,16 +94,11 @@
 		pinctrl-1 = <&all_nand_pins>;
 		pinctrl-2 = <&nand_cs_pins>;
 		device_id = <0>;
-
-		/*fip/tpl configurations, must be same
-		 * with uboot if bl_mode was set as 1
-		 * bl_mode: 0 compact mode; 1 descrete mode
-		 * if bl_mode was set as 1, fip configeration will work
-		 */
+		clocks = <&clkc CLKID_SD_EMMC_C>,
+			<&clkc CLKID_FCLK_DIV2>;
+		clock-names = "gate", "fdiv2pll";
 		bl_mode = <1>;
-		/*copy count of fip*/
 		fip_copies = <4>;
-		/*size of each fip copy */
 		fip_size = <0x200000>;
 		nand_clk_ctrl = <0xFFE07000>;
 		plat-names = "bootloader","nandnormal";
@@ -126,15 +130,6 @@
 			rb_detect = <1>;
 		};
 		nand_partitions:nand_partition{
-			/*
-			 * if bl_mode is 1, tpl size was generate by
-			 * fip_copies * fip_size which
-			 * will not skip bad when calculating
-			 * the partition size;
-			 *
-			 * if bl_mode is 0,
-			 * tpl partition must be comment out.
-			 */
 			tpl{
 				offset=<0x0 0x0>;
 				size=<0x0 0x0>;
@@ -166,7 +161,9 @@
 	ethmac: ethernet@0xff3f0000 {
 			compatible = "amlogic, gxbb-eth-dwmac";
 			reg = <0x0 0xff3f0000 0x0 0x10000
-			0x0 0xff634540 0x0 0x8>;
+			0x0 0xff634540 0x0 0x8
+			0x0 0xff634558 0x0 0xc
+			0x0 0xffd01008 0x0 0x4>;
 			interrupts = <0 8 1>;
 			pinctrl-names = "external_eth_pins";
 			pinctrl-0 = <&external_eth_pins>;
@@ -840,7 +837,7 @@
 		compatible = "amlogic, unifykey";
 		status = "ok";
 
-		unifykey-num = <6>;
+		unifykey-num = <11>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -848,6 +845,11 @@
 		unifykey-index-4 = <&keysn_4>;
 		unifykey-index-5 = <&keysn_5>;
 		unifykey-index-6 = <&keysn_6>;
+		unifykey-index-7 = <&keysn_7>;
+		unifykey-index-8 = <&keysn_8>;
+		unifykey-index-9 = <&keysn_9>;
+		unifykey-index-10 = <&keysn_10>;
+
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -883,6 +885,26 @@
 		};
 		keysn_6:key_6{
 			key-name = "gva_certs";
+			key-device = "normal";
+			key-permit = "read","write","del";
+		};
+		keysn_7:key_7{
+			key-name = "lang";
+			key-device = "normal";
+			key-permit = "read","write","del";
+		};
+		keysn_8:key_8{
+			key-name = "country";
+			key-device = "normal";
+			key-permit = "read","write","del";
+		};
+		keysn_9:key_9{
+			key-name = "locale_lang";
+			key-device = "normal";
+			key-permit = "read","write","del";
+		};
+		keysn_10:key_10{
+			key-name = "locale_region";
 			key-device = "normal";
 			key-permit = "read","write","del";
 		};

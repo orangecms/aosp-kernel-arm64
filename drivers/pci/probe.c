@@ -1363,6 +1363,10 @@ static void pci_configure_mps(struct pci_dev *dev)
 	if (!pci_is_pcie(dev) || !bridge || !pci_is_pcie(bridge))
 		return;
 
+	/* MPS and MRRS fields are of type 'RsvdP' for VFs, short-circuit out */
+	if (dev->is_virtfn)
+		return;
+
 	mps = pcie_get_mps(dev);
 	p_mps = pcie_get_mps(bridge);
 
@@ -2451,6 +2455,13 @@ unsigned int pci_rescan_bus(struct pci_bus *bus)
 	max = pci_scan_child_bus(bus);
 	pci_assign_unassigned_bus_resources(bus);
 	pci_bus_add_devices(bus);
+
+#ifdef CONFIG_AMLOGIC_PCIE
+#ifdef CONFIG_ARM
+	/* support old dtbs that incorrectly describe IRQs */
+	pci_fixup_irqs(pci_common_swizzle, of_irq_parse_and_map_pci);
+#endif
+#endif
 
 	return max;
 }

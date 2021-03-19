@@ -59,7 +59,9 @@ UINT8 FlmVOFSftInt(struct sFlmSftPar *pPar)
 	pPar->cmb22_nocmb_num = 30;
 	pPar->flm22_en = 1;
 	pPar->flm32_en = 1;
+	pPar->flm22_force = 0;
 	pPar->flm22_flag = 1;
+	pPar->flm22_avg_flag = 0;
 	pPar->flm2224_flag = 1;
 	pPar->flm22_comlev = 22;
 	pPar->flm22_comlev1 = 8;
@@ -70,7 +72,7 @@ UINT8 FlmVOFSftInt(struct sFlmSftPar *pPar)
 	pPar->dif01rate = 20;
 	pPar->flag_di01th = 0;
 	pPar->numthd = 60;
-	pPar->flm32_dif02_gap_th = 7;
+	pPar->flm32_dif02_gap_th = 3;/*suggest from vlsi-yanling*/
 	pPar->flm32_luma_th = 90;
 	pPar->sF32Dif02M0 = 4096;/* mpeg-4096, cvbs-8192 */
 	pPar->sF32Dif02M1 = 4096;
@@ -234,6 +236,31 @@ static int dif01_ratio = 10;
 module_param(dif01_ratio,  int, 0644);
 MODULE_PARM_DESC(dif01_ratio, "dif01_ratio");
 
+static int nflagch4_ratio = 1;
+module_param(nflagch4_ratio,  int, 0644);
+MODULE_PARM_DESC(nflagch4_ratio, "nflagch4_ratio");
+
+static int nflagch5_ratio = 2;
+module_param(nflagch5_ratio,  int, 0644);
+MODULE_PARM_DESC(nflagch5_ratio, "nflagch5_ratio");
+
+static int nflagch4_th; /*0*/
+module_param(nflagch4_th,  int, 0644);
+MODULE_PARM_DESC(nflagch4_th, "nflagch4_th");
+
+static int nflagch5_th = 1;
+module_param(nflagch5_th,  int, 0644);
+MODULE_PARM_DESC(nflagch5_th, "nflagch5_th");
+
+static int dif02_flag = 1;
+module_param(dif02_flag,  int, 0644);
+MODULE_PARM_DESC(dif02_flag, "dif02_flag");
+
+static int dif02_ratio = 20;
+module_param(dif02_ratio,  int, 0644);
+MODULE_PARM_DESC(dif02_ratio, "dif02_ratio");
+
+
 
 int comsum;
 
@@ -262,6 +289,9 @@ int FlmVOFSftTop(UINT8 *rCmb32Spcl, unsigned short *rPstCYWnd0,
 	static int comsumpre;
 	static int nS1pre;
 	int dif01th = 0;
+	int avg_flag = 0;
+	int flm22_min = 0;
+	int flm22_th = 0;
 
 	int nDIF01[HISDIFNUM];
 	int nDIF02[HISDIFNUM];
@@ -276,6 +306,8 @@ int FlmVOFSftTop(UINT8 *rCmb32Spcl, unsigned short *rPstCYWnd0,
 	int flm22_flag = pPar->flm22_flag;
 	int flm2224_flag = pPar->flm2224_flag;
 	int flm22_comth = pPar->flm22_comth;
+	int flm22_avg_flag = pPar->flm22_avg_flag;
+	int flm22_force =  pPar->flm22_force;
 	int comdif = 0;
 	int dif01avg = 0;
 
@@ -431,6 +463,19 @@ int FlmVOFSftTop(UINT8 *rCmb32Spcl, unsigned short *rPstCYWnd0,
 	/* pFMReg->rFlmPstGCm = 0; */
 	*rFlmPstGCm = 0;
 	*frame_diff_avg = DIF02[HISDIFNUM-1] / (glb_frame_mot_num + 1);
+	/*-----------------*/
+	/*force entry pulldown22 to fix image jitter when play DTV*/
+	/*3 channels by vlsi-yanling*/
+	flm22_min = nDIF01[HISDIFNUM-1] > nDIF01[HISDIFNUM-2]
+		? nDIF01[HISDIFNUM-2] : nDIF01[HISDIFNUM-1];
+	flm22_th = flm22_min/2;
+	avg_flag = abs(nDIF01[HISDIFNUM-1] - nDIF01[HISDIFNUM-2]) > flm22_th
+		? 1:0;
+	avg_flag =
+		(max(nDIF01[HISDIFNUM-1], nDIF01[HISDIFNUM-2]) > (1<<16)
+		&& pRDat.iHeight == 288)
+		? avg_flag : 0;
+	/*-----------------*/
 	/* rFlmPstGCm = 1; */
 	if (pRDat.pMod32[HISDETNUM - 1 - mDly] == 3) {
 		nT0 = pRDat.pFlg32[HISDETNUM - 1 - mDly] % 2;
@@ -462,8 +507,10 @@ int FlmVOFSftTop(UINT8 *rCmb32Spcl, unsigned short *rPstCYWnd0,
 			flm22_mim_numb = flm22_mim_smfrms;
 
 		if (pr_pd)
-			pr_info("diff02-avg=%4d\n", *frame_diff_avg);
-		if (*frame_diff_avg > flm22_frmdif_max) {
+			pr_info("diff02-avg=%4d, flm22_min=%4d,flm22_th=%4d, avg_flag=%d\n",
+				*frame_diff_avg, flm22_min, flm22_th, avg_flag);
+		if ((*frame_diff_avg > flm22_frmdif_max)
+			&& (avg_flag == 0 || flm22_avg_flag == 1)) {
 			ntmp = *frame_diff_avg - flm22_frmdif_max;
 			if (ntmp > flm22_minus_cntmax)
 				ntmp = flm22_minus_cntmax;
@@ -482,7 +529,8 @@ int FlmVOFSftTop(UINT8 *rCmb32Spcl, unsigned short *rPstCYWnd0,
 
 			if (pr_pd)
 				pr_info("diff01-avg=%4d\n", ntmp);
-			if (ntmp > flm22_flddif_max) {
+			if ((ntmp > flm22_flddif_max)
+				&& (avg_flag == 0 || flm22_avg_flag == 1)) {
 				ntmp = ntmp - flm22_flddif_max;
 
 				if (ntmp > flm22_minus_cntmax)
@@ -506,7 +554,8 @@ int FlmVOFSftTop(UINT8 *rCmb32Spcl, unsigned short *rPstCYWnd0,
 					nS1 = 0;
 				else
 					nS1 = nS1 - pPar->flm22_comlev;
-			} else if (dif01avg > pPar->flm22_dif01_avgth) {
+			} else if ((dif01avg > pPar->flm22_dif01_avgth)
+				&& (avg_flag == 0 || flm22_avg_flag == 1)) {
 				if (nS1 < pPar->flm22_comlev)
 					nS1 = 0;
 				else
@@ -539,6 +588,14 @@ int FlmVOFSftTop(UINT8 *rCmb32Spcl, unsigned short *rPstCYWnd0,
 		 */
 		 *rFlmPstMod = 0;
 		nS1 = 0;
+	}
+	if (flm22_force) {
+		*rFlmSltPre = nDIF01[HISDIFNUM-1] > nDIF01[HISDIFNUM-2] ? 1 : 0;
+		/* Post-processing: film mode,00: global combing,
+		 * 01: 2-2 film, 10: 2-3 film, 11:-others
+		 */
+		*rFlmPstMod = 1;
+		nS1 = 300; /*increase flm22_force level from vlsi-yanling*/
 	}
 	pre_fld_motnum = glb_field_mot_num;
 
@@ -665,6 +722,9 @@ int Flm32DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 	int nFlgChk1 = 0;
 	int nFlgChk2 = 0;
 	int nFlgChk3 = 0; /* for Mit32VHLine */
+	int nFlgChk4 = 0;
+	int nFlgChk5 = 0;
+	int nMean = 0;
 
 	int luma_avg = 0;
 	int flm32_dif02_gap = 0;
@@ -717,7 +777,11 @@ int Flm32DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 			nSM += nT1;
 		}
 	}
-	nAV11 = (nSM - nMx + nT2 / 2) / (nT2 - 1);
+	/* for coverity error,"nT2 - 1" which may be zero */
+	if (nT2 != 1)
+		nAV11 = (nSM - nMx + nT2 / 2) / (nT2 - 1);
+	else
+		pr_info("%s: Error nT2 is one\n", __func__);
 
 	nAV1 = (sFrmDifAvgRat * nAV11 + (32 - sFrmDifAvgRat) * nAV12);
 	nAV1 = ((nAV1 + 16) >> 5);
@@ -787,6 +851,35 @@ int Flm32DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 		nFlgChk1 = 0;
 		nFlgChk2 = 0;
 	}
+	//nFlgChk4/5 large dif change quit mode
+	if (
+		pFlg32[HISDETNUM - 1] > 1 && (dif02_flag ||
+		nDif02[HISDIFNUM - 1] > (1 << dif02_ratio))) {
+		nFlgChk4 =  nDif02[HISDIFNUM - 1] - nDif02[HISDIFNUM - 6];
+		if (nFlgChk4 < 0)
+			nFlgChk4 = -nFlgChk4;
+		nFlgChk4 = nFlgChk4;
+		nMean = (nDif02[HISDIFNUM - 1] + nDif01[HISDIFNUM - 6]) / 2;
+		nFlgChk4 = nflagch4_ratio * nFlgChk4 / nMean;
+	} else {
+		nFlgChk4 = 0;
+	}
+	if (
+		pFlg32[HISDETNUM - 1] == 1 ||
+		pFlg32[HISDETNUM - 1] == 2 ||
+		pFlg32[HISDETNUM - 1] == 4) {
+		nFlgChk5 =  nDif01[HISDIFNUM - 1] - nDif01[HISDIFNUM - 6];
+		if (nFlgChk5 < 0)
+			nFlgChk5 = -nFlgChk5;
+		nMean = (nDif01[HISDIFNUM - 1] + nDif01[HISDIFNUM - 6]) / 2;
+		nFlgChk5 = nflagch5_ratio * nFlgChk5 / nMean;
+	} else {
+		nFlgChk5 = 0;
+	}
+	if (prt_flg)
+		sprintf(debug_str + strlen(debug_str),
+			"nFlgChk4/5=(%2d,%2d)\n",
+			nFlgChk4, nFlgChk5);
 
 	nT2 = 5 * nDif02[HISDIFNUM - 1] / (nMn + sFrmDifLgTDif + 1);
 	nT2 = nT2>>1;
@@ -807,7 +900,9 @@ int Flm32DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 	if (nSTP > 16)
 		nSTP = 16;
 		/*patch for dark scenes don't into pulldown32 by vlsi yanling*/
-	if (((nMx + nMn/2) / (nMn + 1)) < flm32_dif02_gap)
+	if (
+		((nMx + nMn / 2) / (nMn + 1)) < flm32_dif02_gap &&
+		pFlg32[HISDETNUM - 1] > 1)
 		nSTP = 0;
 	/*---------------*/
 	for (nT0 = 1; nT0 < HISDETNUM; nT0++) {
@@ -881,6 +976,9 @@ int Flm32DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 		}
 
 		nFlg12[nT0] = ((nSTP + 8) >> 4);
+
+		if (nT0 == 5 && nMIX == 1 && nFlg01[nT0] == 0)
+			nFlg12[nT0] = 0;
 	}
 	/* -------------------------------------------- */
 
@@ -932,7 +1030,9 @@ int Flm32DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 		(nFlgChk3 > flm32_ck13_rtn))
 		|| (nFlgChk2 > flm32_chk2_rtn)
 		|| ((pFlg32[HISDETNUM-1] == 4) &&
-		(nFlgChk3 > flm32_chk3_rtn))) {
+		(nFlgChk3 > flm32_chk3_rtn)) ||
+		(nFlgChk4 > nflagch4_th ||
+		 nFlgChk5 > nflagch5_th)) {
 		pRDat->pMod32[HISDETNUM - 1] = 0;
 		pRDat->pFlg32[HISDETNUM - 1] = 0;
 
@@ -1344,8 +1444,17 @@ int Flm22DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 	}
 	nFlgChk6 = nFlgChk6 / 6;
 
-	nAV21 = (nSM21 + nL21 / 2) / nL21;	/* High average */
-	nAV22 = (nSM22 + nL22 / 2) / nL22;	/* Low average */
+	/* for coverity error,"nL21/nL22" which may be zero */
+	if (nL21)
+		nAV21 = (nSM21 + nL21 / 2) / nL21;	/* High average */
+	else
+		pr_info("%s: Error nL21 is zero\n", __func__);
+
+	if (nL22)
+		nAV22 = (nSM22 + nL22 / 2) / nL22;	/* Low average */
+	else
+		pr_info("%s: Error nL22 is zero\n", __func__);
+
 	nOfst = nAV21 - nAV22;
 
 	if (prt_flg)
@@ -1596,10 +1705,12 @@ int Flm22DetSft(struct sFlmDatSt *pRDat, int *nDif02,
 	/*DI:PQ patch fix 480i error into pulldown22(by yanling)*/
 	flm22_min = nDif01[HISDIFNUM-1] > nDif01[HISDIFNUM-2]
 		? nDif01[HISDIFNUM-2] : nDif01[HISDIFNUM-1];
-	flm22_th = flm22_min/2;
+	flm22_th = min(flm22_min / 2, 1 << 16);
 	dif_flag = abs(nDif01[HISDIFNUM-1]-nDif01[HISDIFNUM-2])
 		> flm22_th ? 1:0;
-	dif_flag = nDif01[HISDIFNUM-1] > (1<<16) ? dif_flag : 0;
+	dif_flag =
+		max(nDif01[HISDIFNUM-1], nDif01[HISDIFNUM-2]) > (1<<16) ?
+		dif_flag : 0;
 	if (flm22_flag && dif_flag) {
 	/* ---------------------- */
 		if (pFlg[HISDETNUM-1] == 3
@@ -1655,7 +1766,7 @@ static int DIweavedetec(struct sFlmSftPar *pPar, int nDif01)
 	int flag_di01th = pPar->flag_di01th;
 	int numthd = pPar->numthd;
 	static int numdif;
-	static int predifflag;
+	static int predifflag = 2;
 	static int predif01;
 	static int difflag;
 
@@ -1663,6 +1774,9 @@ static int DIweavedetec(struct sFlmSftPar *pPar, int nDif01)
 	if (abs(predif01 - nDif01) < dif01th && flag_di01th)
 		difflag = 2;
 	else {
+		if (pr_pd)
+			pr_info("predif01=%d,dif01=%d,predifflag=%d\n",
+				predif01, nDif01, predifflag);
 		if (predif01 < nDif01)
 			difflag = 1;
 		else
@@ -1675,9 +1789,15 @@ static int DIweavedetec(struct sFlmSftPar *pPar, int nDif01)
 			numdif = 0;
 			difflag = difflag^1;
 			predifflag = difflag;
-		} else
+		} else {
+			predifflag = difflag;
 			difflag = 2;
+		}
+		if (pr_pd)
+			pr_info("difflag=%d\n", difflag);
 	}
+	if (pr_pd)
+		pr_info("difflag=%d\n", difflag);
 	predif01 = nDif01;
 	return difflag;
 }

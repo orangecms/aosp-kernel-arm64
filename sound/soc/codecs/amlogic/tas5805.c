@@ -649,10 +649,10 @@ const uint32_t tas5805m_volume[] = {
 #define TAS5805_EQPARAM_LENGTH 610
 #define TAS5805_EQ_LENGTH 245
 #define FILTER_PARAM_BYTE 244
-static  int m_eq_tab[TAS5805_EQPARAM_LENGTH][2] = {0};
+static  int m_eq_tab[TAS5805_EQPARAM_LENGTH][2];
 #define TAS5805_DRC_PARAM_LENGTH 29
 #define TAS5805_DRC_PARAM_COUNT  58
-static  int m_drc_tab[TAS5805_DRC_PARAM_LENGTH][2] = {0};
+static  int m_drc_tab[TAS5805_DRC_PARAM_LENGTH][2];
 
 struct tas5805m_priv {
 	struct regmap *regmap;
@@ -1087,17 +1087,12 @@ static int tas5805m_probe(struct snd_soc_codec *codec)
 	int ret;
 	struct tas5805m_priv *tas5805m = snd_soc_codec_get_drvdata(codec);
 
-//	ret =
-//	    regmap_register_patch(tas5805m->regmap, tas5805m_init_sequence,
-//				  ARRAY_SIZE(tas5805m_init_sequence));
 	usleep_range(20 * 1000, 21 * 1000);
 	ret = tas5805m_reg_init(codec);
 	if (ret != 0)
 		goto err;
 
-	if (tas5805m)
-		tas5805m_set_volume(codec, tas5805m->vol);
-
+	tas5805m_set_volume(codec, tas5805m->vol);
 	snd_soc_add_codec_controls(codec, tas5805m_vol_control,
 			ARRAY_SIZE(tas5805m_vol_control));
 	tas5805m->codec = codec;

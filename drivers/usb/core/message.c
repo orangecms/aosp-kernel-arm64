@@ -599,12 +599,13 @@ void usb_sg_cancel(struct usb_sg_request *io)
 	int i, retval;
 
 	spin_lock_irqsave(&io->lock, flags);
-	if (io->status) {
+	if (io->status || io->count == 0) {
 		spin_unlock_irqrestore(&io->lock, flags);
 		return;
 	}
 	/* shut everything down */
 	io->status = -ECONNRESET;
+	io->count++;		/* Keep the request alive until we're done */
 	spin_unlock_irqrestore(&io->lock, flags);
 
 	for (i = io->entries - 1; i >= 0; --i) {
@@ -618,6 +619,12 @@ void usb_sg_cancel(struct usb_sg_request *io)
 			dev_warn(&io->dev->dev, "%s, unlink --> %d\n",
 				 __func__, retval);
 	}
+
+	spin_lock_irqsave(&io->lock, flags);
+	io->count--;
+	if (!io->count)
+		complete(&io->complete);
+	spin_unlock_irqrestore(&io->lock, flags);
 }
 EXPORT_SYMBOL_GPL(usb_sg_cancel);
 
@@ -831,9 +838,11 @@ int usb_string(struct usb_device *dev, int index, char *buf, size_t size)
 
 	if (dev->state == USB_STATE_SUSPENDED)
 		return -EHOSTUNREACH;
-	if (size <= 0 || !buf || !index)
+	if (size <= 0 || !buf)
 		return -EINVAL;
 	buf[0] = 0;
+	if (index <= 0 || index >= 256)
+		return -EINVAL;
 	tbuf = kmalloc(256, GFP_NOIO);
 	if (!tbuf)
 		return -ENOMEM;
@@ -1195,8 +1204,7 @@ void usb_disable_device(struct usb_device *dev, int skip_ep0)
 			dev->actconfig->interface[i] = NULL;
 		}
 
-		if (dev->usb2_hw_lpm_enabled == 1)
-			usb_set_usb2_hardware_lpm(dev, 0);
+		usb_disable_usb2_hardware_lpm(dev);
 		usb_unlocked_disable_lpm(dev);
 		usb_disable_ltm(dev);
 
@@ -1293,6 +1301,11 @@ void usb_enable_interface(struct usb_device *dev,
  * is submitted that needs that bandwidth.  Some other operating systems
  * allocate bandwidth early, when a configuration is chosen.
  *
+ * xHCI reserves bandwidth and configures the alternate setting in
+ * usb_hcd_alloc_bandwidth(). If it fails the original interface altsetting
+ * may be disabled. Drivers cannot rely on any particular alternate
+ * setting being in effect after a failure.
+ *
  * This call is synchronous, and may not be used in an interrupt context.
  * Also, drivers must not change altsettings while urbs are scheduled for
  * endpoints in that interface; all such urbs must first be completed
@@ -1328,6 +1341,12 @@ int usb_set_interface(struct usb_device *dev, int interface, int alternate)
 			 alternate);
 		return -EINVAL;
 	}
+	/*
+	 * usb3 hosts configure the interface in usb_hcd_alloc_bandwidth,
+	 * including freeing dropped endpoint ring buffers.
+	 * Make sure the interface endpoints are flushed before that
+	 */
+	usb_disable_interface(dev, iface, false);
 
 	/* Make sure we have enough bandwidth for this alternate interface.
 	 * Remove the current alt setting and add the new alt setting.
@@ -1713,6 +1732,9 @@ static void usb_EHtest_poll_status(struct work_struct *ws)
 	} else if ((poll_status_flag == 1) && !(portstatus & 0x01)) {
 		dev_info(&dev->dev,
 			"PORT IS disCONNECT portstatus=0x%04x\n", portstatus);
+		queue_delayed_work(system_wq,
+				   &dev->portstatus_work,
+				   msecs_to_jiffies(1000));
 
 	} else {
 		queue_delayed_work(system_wq,
@@ -2178,7 +2200,7 @@ free_interfaces:
 	if (usb_host_test_vid > 0) {
 		if (dev->descriptor.idVendor == USB_HSET_TEST_VID) {
 			usb_host_test_vid = dev->descriptor.idVendor;
-			usb_host_test_pid = dev->descriptor.idProduct;
+			//usb_host_test_pid = dev->descriptor.idProduct;
 			dev_info(&dev->dev,
 			"the dev port is %d, and this is test udisk vid = 0x%04x\n",
 			dev->portnum, usb_host_test_vid);

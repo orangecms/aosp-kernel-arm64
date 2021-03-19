@@ -19,45 +19,26 @@
 #define __ATV_DEMOD_DRIVER_H__
 
 
+#include <linux/amlogic/cpu_version.h>
 #include <media/v4l2-device.h>
-#include "drivers/media/dvb-core/dvb_frontend.h"
+#include <dvb_frontend.h>
 #include "atv_demod_v4l2.h"
 
-struct aml_atvdemod_parameters {
-
-	struct analog_parameters param;
-
-	unsigned int soundsys;/* A2,BTSC/EIAJ/NICAM */
-	unsigned int lock_range;
-	unsigned int leap_step;
-
-	unsigned int afc_range;
-	unsigned int tuner_id;
-	unsigned int if_freq;
-	unsigned int if_inv;
-	unsigned int reserved;
-};
-
-struct aml_tuner {
-	struct tuner_config cfg;
-	unsigned int i2c_adapter_id;
-	struct i2c_adapter *i2c_adp;
-};
 
 struct aml_atvdemod_device {
 	char *name;
 	struct class cls;
 	struct device *dev;
 
-	unsigned int tuner_num;
-	int tuner_cur;
-	struct aml_tuner *tuners;
+	int tuner_id;
+	u8 i2c_addr;
+	struct i2c_adapter i2c_adap;
 
 	unsigned int if_freq;
 	unsigned int if_inv;
 	u64 std;
 	unsigned int audmode;
-	unsigned int soundsys;
+	unsigned int sound_mode;
 	int fre_offset;
 
 	struct pinctrl *agc_pin;
@@ -98,7 +79,20 @@ struct aml_atvdemod_device {
 
 extern struct aml_atvdemod_device *amlatvdemod_devp;
 
-extern int aml_attach_demod(struct aml_atvdemod_device *dev);
-extern int aml_attach_tuner(struct aml_atvdemod_device *dev);
+extern int aml_atvdemod_attach_demod(struct aml_atvdemod_device *dev);
+extern int aml_atvdemod_attach_tuner(struct aml_atvdemod_device *dev);
+
+static inline bool is_meson_t5_cpu(void)
+{
+	return false;
+
+#if 0
+	if (get_cpu_type() == MESON_CPU_MAJOR_ID_T5 ||
+		get_cpu_type() == MESON_CPU_MAJOR_ID_T5D)
+		return true;
+	else
+		return false;
+#endif
+}
 
 #endif /* __ATV_DEMOD_DRIVER_H__ */

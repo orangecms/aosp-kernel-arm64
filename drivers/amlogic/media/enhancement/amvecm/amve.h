@@ -20,6 +20,7 @@
 
 #include <linux/amlogic/media/vfm/vframe.h>
 #include <linux/amlogic/media/amvecm/ve.h>
+#include "linux/amlogic/media/amvecm/cm.h"
 
 /* #if (MESON_CPU_TYPE >= MESON_CPU_TYPE_MESON8) */
 /* #define WRITE_VPP_REG(x,val) */
@@ -41,6 +42,38 @@
 /* READ_CBUS_REG_BITS(x,start,length) */
 /* #endif */
 
+enum pq_ctl_cfg_e {
+	TV_CFG_DEF = 0,
+	OTT_CFG_DEF,
+	TV_DV_BYPASS,
+	OTT_DV_BYPASS,
+	PQ_CFG_MAX
+};
+
+struct pq_ctrl_s {
+	u8 sharpness0_en;
+	u8 sharpness1_en;
+	u8 dnlp_en;
+	u8 cm_en;
+	u8 vadj1_en;
+	u8 vd1_ctrst_en;
+	u8 vadj2_en;
+	u8 post_ctrst_en;
+	u8 wb_en;
+	u8 gamma_en;
+	u8 lc_en;
+	u8 black_ext_en;
+	u8 chroma_cor_en;
+	u8 reserved;
+};
+
+struct vpp_pq_ctrl_s {
+	unsigned int length;
+	union {
+		void *ptr;/*point to pq_ctrl_s*/
+		long long ptr_length;
+	};
+};
 
 struct ve_regs_s {
 	unsigned int val:32;
@@ -57,6 +90,7 @@ struct ve_regs_s {
 	unsigned int rsv:5;
 };
 
+extern unsigned int gamma_loadprotect_en;
 extern struct ve_hist_s video_ve_hist;
 extern void ve_hist_gamma_reset(void);
 extern unsigned int ve_size;
@@ -92,9 +126,10 @@ void ve_set_regmap(struct ve_regmap_s *p);
 extern void ve_enable_dnlp(void);
 extern void ve_disable_dnlp(void);
 
-extern void vpp_enable_lcd_gamma_table(void);
-extern void vpp_disable_lcd_gamma_table(void);
-extern void vpp_set_lcd_gamma_table(u16 *data, u32 rgb_mask);
+int vpp_get_encl_viu_mux(void);
+void vpp_enable_lcd_gamma_table(int viu_sel);
+void vpp_disable_lcd_gamma_table(int viu_sel);
+void vpp_set_lcd_gamma_table(u16 *data, u32 rgb_mask, int viu_sel);
 extern void amve_write_gamma_table(u16 *data, u32 rgb_mask);
 extern void vpp_set_rgb_ogo(struct tcon_rgb_ogo_s *p);
 extern void vpp_phase_lock_on_vs(unsigned int cycle,
@@ -157,7 +192,6 @@ extern void amve_sharpness_adaptive_setting(struct vframe_s *vf,
 extern void amve_sharpness_init(void);
 extern struct am_regs_s sr1reg_sd_scale;
 extern struct am_regs_s sr1reg_hd_scale;
-extern struct am_regs_s sr0reg_cvbs;
 extern struct am_regs_s sr1reg_cvbs;
 extern struct am_regs_s sr1reg_hv_noscale;
 extern void amvecm_fresh_overscan(struct vframe_s *vf);
@@ -169,6 +203,9 @@ extern void dump_plut3d_table(void);
 extern void dump_plut3d_reg_table(void);
 
 extern void amvecm_gamma_init(bool en);
-
+extern void set_gamma_regs(int en, int sel);
+void amvecm_wb_enable(int enable);
+int vpp_pq_ctrl_config(struct pq_ctrl_s pq_cfg);
+unsigned int skip_pq_ctrl_load(struct am_reg_s *p);
 #endif
 

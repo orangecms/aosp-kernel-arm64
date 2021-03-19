@@ -24,6 +24,7 @@
 #include <linux/gpio/consumer.h>
 #include "dwmac1000.h"
 #include "dwmac_dma.h"
+#include <linux/amlogic/cpu_version.h>
 #endif
 #include "stmmac_platform.h"
 
@@ -33,6 +34,7 @@
 /*if not g12a use genphy driver*/
 /* if it's internal phy we will shutdown analog*/
 static unsigned int is_internal_phy;
+static unsigned int external_invert_flag;
 /* Ethernet register for G12A PHY */
 #define REG_ETH_REG1_OFFSET 0x4
 #define ETH_PLL_CTL0 0x44
@@ -54,6 +56,10 @@ static unsigned int is_internal_phy;
 struct meson_dwmac_data {
 	bool g12a_phy;
 };
+
+void __iomem *ee_reset_base;
+unsigned int rst_mask;
+struct platform_device *ppdev;
 #endif
 
 struct meson_dwmac {
@@ -67,7 +73,26 @@ struct meson_dwmac {
 static void meson6_dwmac_fix_mac_speed(void *priv, unsigned int speed)
 {
 #ifdef CONFIG_AMLOGIC_ETH_PRIVE
+	struct meson_dwmac *dwmac = priv;
+	unsigned int val;
 
+	if ((dwmac->data->g12a_phy) && (!is_internal_phy)) {
+		if (!external_invert_flag)
+			return;
+		val = readl(dwmac->reg);
+
+		switch (speed) {
+		case SPEED_10:
+		case SPEED_100:
+			val &= ~(1 << 3);
+			break;
+		case SPEED_1000:
+			val |= (1 << 3);
+		break;
+		}
+
+		writel(val, dwmac->reg);
+	}
 #else
 	struct meson_dwmac *dwmac = priv;
 	unsigned int val;
@@ -224,6 +249,21 @@ static void __iomem *network_interface_setup(struct platform_device *pdev)
 	} else {
 		pin_ctl = devm_pinctrl_get_select(&pdev->dev, "eth_pins");
 	}
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 3);
+	if (res) {
+		addr = devm_ioremap(dev, res->start, resource_size(res));
+		if (IS_ERR(addr)) {
+			dev_err(&pdev->dev, "Unable to map %d\n", __LINE__);
+			return NULL;
+		}
+
+		ee_reset_base = addr;
+		pr_info(" ee eth reset:Addr = %p\n", ee_reset_base);
+	} else {
+		ee_reset_base = NULL;
+		dev_err(&pdev->dev, "Unable to get resource(%d)\n", __LINE__);
+	}
 	pr_debug("Ethernet: pinmux setup ok\n");
 	return PREG_ETH_REG0;
 }
@@ -295,22 +335,32 @@ static int dwmac_meson_cfg_analog(void __iomem *base_addr,
 	return 0;
 }
 
+unsigned int  tx_amp_bl2;
+unsigned int  enet_type;
 /*for newer then g12a use this dts architecture for dts*/
 void __iomem *phy_analog_config_addr;
+/*sc2 need re-setup top*/
+u32 mc_val;
+u32 cali_val;
+void __iomem *REG_ETH_reg0_addr;
 static void __iomem *g12a_network_interface_setup(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct device *dev = &pdev->dev;
 	struct pinctrl *pin_ctl;
 	struct resource *res = NULL;
-	u32 mc_val;
-	u32 cali_val;
+//	u32 mc_val;
+//	u32 cali_val;
 	void __iomem *addr = NULL;
-	void __iomem *REG_ETH_reg0_addr = NULL;
+//	void __iomem *REG_ETH_reg0_addr = NULL;
 	void __iomem *ETH_PHY_config_addr = NULL;
+	void __iomem *tx_amp_src = NULL;
 	u32 internal_phy = 0;
+	int auto_cali_idx = -1;
 	is_internal_phy = 0;
+	external_invert_flag = 0;
 
+	ppdev = pdev;
 	pr_debug("g12a_network_interface_setup\n");
 	/*map PRG_ETH_REG */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "eth_cfg");
@@ -326,7 +376,33 @@ static void __iomem *g12a_network_interface_setup(struct platform_device *pdev)
 	}
 
 	REG_ETH_reg0_addr = addr;
-	pr_info(" REG0:Addr = %p\n", REG_ETH_reg0_addr);
+
+	/*map ETH_RESET address*/
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "eth_reset");
+	if (!res) {
+		dev_err(&pdev->dev, "Unable to get resource(%d)\n", __LINE__);
+		ee_reset_base = NULL;
+	} else {
+		addr = devm_ioremap(dev, res->start, resource_size(res));
+		if (IS_ERR(addr)) {
+			dev_err(&pdev->dev, "Unable to map reset base\n");
+			return NULL;
+		}
+		ee_reset_base = addr;
+	}
+
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "tx_amp_src");
+	if (!res) {
+		pr_info("tx_amp_src not setup\n");
+	} else {
+		tx_amp_src = devm_ioremap_resource(dev, res);
+		if (IS_ERR(addr)) {
+			dev_err(&pdev->dev,
+				"cat't map tx_amp (%d)\n", __LINE__);
+			return NULL;
+		}
+		tx_amp_bl2 = readl(tx_amp_src);
+	}
 
 	/*map ETH_PLL address*/
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "eth_pll");
@@ -349,6 +425,12 @@ static void __iomem *g12a_network_interface_setup(struct platform_device *pdev)
 	else
 		writel(mc_val, REG_ETH_reg0_addr);
 
+	if (of_property_read_u32(np, "rst_mask", &rst_mask))
+		pr_info("no rst_mask setting\n");
+
+	if (of_property_read_u32(np, "enet_type", &enet_type))
+		pr_info("default enet type as 0\n");
+
 	/*read phy option*/
 	if (of_property_read_u32(np, "internal_phy", &internal_phy) != 0) {
 		pr_info("Dts miss internal_phy item\n");
@@ -362,9 +444,6 @@ static void __iomem *g12a_network_interface_setup(struct platform_device *pdev)
 		if (of_property_read_u32(np, "mac_wol",
 					 &support_mac_wol))
 			pr_info("MAC wol not set\n");
-		else
-			pr_info("MAC wol :got wol %d .set it\n",
-				support_mac_wol);
 		/*PLL*/
 		dwmac_meson_cfg_pll(ETH_PHY_config_addr, pdev);
 		dwmac_meson_cfg_analog(ETH_PHY_config_addr, pdev);
@@ -376,6 +455,32 @@ static void __iomem *g12a_network_interface_setup(struct platform_device *pdev)
 
 	/*config extern phy*/
 	if (internal_phy == 0) {
+		if (of_property_read_u32(np, "auto_cali_idx", &auto_cali_idx))
+			pr_info("read auto_cali_idx fail\n");
+		else
+			pr_info("auto_cali_idx %d\n", auto_cali_idx);
+
+		if (auto_cali_idx != -1 && auto_cali_idx < 64) {
+			external_tx_delay = 0;
+			if ((auto_cali_idx >= 16) && (auto_cali_idx <= 47))
+				mc_val = 0x1629;
+			else
+				mc_val = 0x1621;
+
+			if (auto_cali_idx >= 32)
+				external_rx_delay = 1;
+			else
+				external_rx_delay = 0;
+			writel(mc_val, REG_ETH_reg0_addr);
+		} else {
+		if (of_property_read_u32(np, "tx_delay", &external_tx_delay))
+			pr_debug("set exphy tx delay\n");
+		if (of_property_read_u32(np, "rx_delay", &external_rx_delay))
+			pr_debug("set exphy rx delay\n");
+		}
+
+		if (mc_val & (1 << 3))
+			external_invert_flag = 1;
 		/* only exphy support wol since g12a*/
 		/*we enable/disable wol with item in dts with "wol=<1>"*/
 		if (of_property_read_u32(np, "wol",
@@ -394,12 +499,16 @@ static void __iomem *g12a_network_interface_setup(struct platform_device *pdev)
 			writel(cali_val, REG_ETH_reg0_addr +
 					REG_ETH_REG1_OFFSET);
 
+		if (auto_cali_idx != -1 && auto_cali_idx < 64) {
+			cali_val = ((auto_cali_idx % 16) << 16);
+			writel(cali_val, REG_ETH_reg0_addr +
+				REG_ETH_REG1_OFFSET);
+		}
 		pin_ctl = devm_pinctrl_get_select
 			(&pdev->dev, "external_eth_pins");
 		return REG_ETH_reg0_addr;
 	}
 
-	pr_info("should not happen\n");
 	return REG_ETH_reg0_addr;
 }
 
@@ -463,6 +572,22 @@ static int meson6_dwmac_resume(struct device *dev)
 	struct pinctrl *pin_ctrl;
 	struct pinctrl_state *turnon_tes = NULL;
 	pr_info("resuem inter = %d\n", is_internal_phy);
+	if ((ee_reset_base) && (support_mac_wol == 0)) {
+		if (rst_mask != 0) {
+			writel((1 << rst_mask), (void __iomem	*)
+				(unsigned long)ee_reset_base);
+		} else {
+			writel((1 << 11), (void __iomem	*)
+				(unsigned long)ee_reset_base);
+		}
+	}
+	/*sc2 will reset top*/
+	if (enet_type == 3) {
+		writel(mc_val, REG_ETH_reg0_addr);
+		writel(cali_val, REG_ETH_reg0_addr +
+				REG_ETH_REG1_OFFSET);
+	}
+
 	if ((is_internal_phy) && (support_mac_wol == 0)) {
 		pin_ctrl = devm_pinctrl_get(dev);
 		if (IS_ERR_OR_NULL(pin_ctrl)) {
@@ -474,7 +599,13 @@ static int meson6_dwmac_resume(struct device *dev)
 			devm_pinctrl_put(pin_ctrl);
 			pin_ctrl = NULL;
 		}
-		dwmac_meson_recover_analog(dev);
+		if (!ee_reset_base) {
+			dwmac_meson_recover_analog(dev);
+		} else {
+			dwmac_meson_cfg_pll(phy_analog_config_addr, ppdev);
+			dwmac_meson_cfg_analog(phy_analog_config_addr, ppdev);
+			dwmac_meson_cfg_ctrl(phy_analog_config_addr, ppdev);
+		}
 	}
 	ret = stmmac_pltfr_resume(dev);
 	return ret;

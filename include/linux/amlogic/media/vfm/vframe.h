@@ -32,6 +32,8 @@
 #define VIDTYPE_INTERLACE_FIRST         0x8
 #define VIDTYPE_MVC                     0x10
 #define VIDTYPE_NO_VIDEO_ENABLE         0x20
+#define VIDTYPE_SEC_MD			0x40
+#define VIDTYPE_VIU_NV12                0x80
 #define VIDTYPE_VIU_422                 0x800
 #define VIDTYPE_VIU_FIELD               0x1000
 #define VIDTYPE_VIU_SINGLE_PLANE        0x2000
@@ -49,7 +51,12 @@
 #define VIDTYPE_COMB_MODE		0x2000000
 #define VIDTYPE_NO_DW			0x4000000
 #define VIDTYPE_SUPPORT_COMPRESS	0x8000000
+#define VIDTYPE_PRE_DI_AFBC		0x10000000
+#define VIDTYPE_RGB_444			0x20000000
+#define VIDTYPE_V4L_EOS			0x80000000
 
+/* 2019-04-22 Suggestions from brian.zhu*/
+#define VIDTYPE_DI_PW			0x40000000
 #define DISP_RATIO_FORCECONFIG          0x80000000
 #define DISP_RATIO_FORCE_NORMALWIDE     0x40000000
 #define DISP_RATIO_FORCE_FULL_STRETCH   0x20000000
@@ -79,7 +86,16 @@
 #define VFRAME_FLAG_ERROR_RECOVERY		8
 #define VFRAME_FLAG_SYNCFRAME			0x10
 #define VFRAME_FLAG_GAME_MODE		0x20
-#define VFRAME_FLAG_EMPTY_FRAME_V4L		0x800
+#define VFRAME_FLAG_VIDEO_COMPOSER     0x40
+#define VFRAME_FLAG_VIDEO_COMPOSER_BYPASS     0x80
+#define VFRAME_FLAG_COMPOSER_DONE	0x100
+#define VFRAME_FLAG_VIDEO_COMPOSER_DMA	0x200
+#define VFRAME_FLAG_VIDEO_LINEAR	0x400
+#define VFRAME_FLAG_EMPTY_FRAME_V4L	0x800
+#define VFRAME_FLAG_FAKE_FRAME		0x1000
+#define VFRAME_FLAG_DOUBLE_FRAM		0x2000
+#define VFRAME_FLAG_VIDEO_DRM		0x4000
+#define VFRAME_FLAG_VIDEO_SECURE	0x20000
 
 enum pixel_aspect_ratio_e {
 	PIXEL_ASPECT_RATIO_1_1,
@@ -108,10 +124,65 @@ struct vframe_hist_s {
 	unsigned char vpp_luma_max;
 	unsigned char vpp_luma_min;
 	unsigned short vpp_gamma[64];
+	unsigned int vpp_hue_gamma[32];
+	unsigned int vpp_sat_gamma[32];
 #ifdef AML_LOCAL_DIMMING
 	unsigned int ldim_max[100];
 #endif
 } /*vframe_hist_t */;
+
+struct tvin_hdr10p_data_s {
+	uint32_t vsif_hb;
+	uint32_t vsif_ieee_code;
+	struct pb4_st {
+		uint8_t rvd:1;
+		uint8_t max_lumin:5;
+		uint8_t app_ver:2;
+	} __packed pb4_st;
+	uint8_t average_maxrgb;
+	uint8_t distrib_valus0;
+	uint8_t distrib_valus1;
+	uint8_t distrib_valus2;
+	uint8_t distrib_valus3;
+	uint8_t distrib_valus4;
+	uint8_t distrib_valus5;
+	uint8_t distrib_valus6;
+	uint8_t distrib_valus7;
+	uint8_t distrib_valus8;
+	struct pb15_18_st {
+		uint32_t knee_point_x_9_6:4;
+		uint32_t num_bezier_curve_anchors:4;
+		uint32_t knee_point_y_9_8:2;
+		uint32_t knee_point_x_5_0:6;
+		uint32_t knee_point_y_7_0:8;
+		uint32_t bezier_curve_anchors0:8;
+	} __packed pb15_18_st;
+	uint8_t bezier_curve_anchors1;
+	uint8_t bezier_curve_anchors2;
+	uint8_t bezier_curve_anchors3;
+	uint8_t bezier_curve_anchors4;
+	uint8_t bezier_curve_anchors5;
+	uint8_t bezier_curve_anchors6;
+	uint8_t bezier_curve_anchors7;
+	uint8_t bezier_curve_anchors8;
+	struct pb27_st {
+		uint8_t rvd:6;
+		uint8_t no_delay_flag:1;
+		uint8_t overlay_flag:1;
+	} __packed pb27_st;
+} __packed;
+
+/*vdin dolby vsi info param*/
+struct tvin_dv_vsif_s {
+	uint8_t dobly_vision_signal:1;
+	uint8_t backlt_ctrl_MD_present:1;
+	uint8_t auxiliary_MD_present:1;
+	uint8_t eff_tmax_PQ_hi;
+	uint8_t eff_tmax_PQ_low;
+	uint8_t auxiliary_runmode;
+	uint8_t auxiliary_runversion;
+	uint8_t auxiliary_debug0;
+};
 
 /*
  * If bottom == 0 or right == 0, then all Blackbar information are invalid
@@ -163,55 +234,6 @@ struct vframe_master_display_colour_s {
 		content_light_level;
 }; /* master_display_colour_info_volume from SEI */
 
-struct vframe_hdr_plus_sei_s {
-	u16 present_flag;
-	u16 itu_t_t35_country_code;
-	u16 itu_t_t35_terminal_provider_code;
-	u16 itu_t_t35_terminal_provider_oriented_code;
-	u16 application_identifier;
-	u16 application_version;
-	/*num_windows max is 3*/
-	u16 num_windows;
-	/*windows xy*/
-	u16 window_upper_left_corner_x[3];
-	u16 window_upper_left_corner_y[3];
-	u16 window_lower_right_corner_x[3];
-	u16 window_lower_right_corner_y[3];
-	u16 center_of_ellipse_x[3];
-	u16 center_of_ellipse_y[3];
-	u16 rotation_angle[3];
-	u16 semimajor_axis_internal_ellipse[3];
-	u16 semimajor_axis_external_ellipse[3];
-	u16 semiminor_axis_external_ellipse[3];
-	u16 overlap_process_option[3];
-	/*target luminance*/
-	u32 tgt_sys_disp_max_lumi;
-	u16 tgt_sys_disp_act_pk_lumi_flag;
-	u16 num_rows_tgt_sys_disp_act_pk_lumi;
-	u16 num_cols_tgt_sys_disp_act_pk_lumi;
-	u16 tgt_sys_disp_act_pk_lumi[25][25];
-
-	/*num_windows max is 3, e.g maxscl[num_windows][i];*/
-	u32 maxscl[3][3];
-	u32 average_maxrgb[3];
-	u16 num_distribution_maxrgb_percentiles[3];
-	u16 distribution_maxrgb_percentages[3][15];
-	u32 distribution_maxrgb_percentiles[3][15];
-	u16 fraction_bright_pixels[3];
-
-	u16 mast_disp_act_pk_lumi_flag;
-	u16 num_rows_mast_disp_act_pk_lumi;
-	u16 num_cols_mast_disp_act_pk_lumi;
-	u16 mast_disp_act_pk_lumi[25][25];
-	/*num_windows max is 3, e.g knee_point_x[num_windows]*/
-	u16 tone_mapping_flag[3];
-	u16 knee_point_x[3];
-	u16 knee_point_y[3];
-	u16 num_bezier_curve_anchors[3];
-	u16 bezier_curve_anchors[3][15];
-	u16 color_saturation_mapping_flag[3];
-	u16 color_saturation_weight[3];
-};
 /* vframe properties */
 struct vframe_prop_s {
 	struct vframe_hist_s hist;
@@ -219,6 +241,7 @@ struct vframe_prop_s {
 	struct vframe_meas_s meas;
 	struct vframe_master_display_colour_s
 	 master_display_colour;
+	struct tvin_hdr10p_data_s hdr10p_data;
 } /*vframe_prop_t */;
 
 struct vdisplay_info_s {
@@ -263,6 +286,34 @@ enum vframe_disp_mode_e {
 	VFRAME_DISP_MODE_OK,
 };
 
+enum vframe_signal_fmt_e {
+	VFRAME_SIGNAL_FMT_INVALID = -1,
+	VFRAME_SIGNAL_FMT_SDR = 0,
+	VFRAME_SIGNAL_FMT_HDR10 = 1,
+	VFRAME_SIGNAL_FMT_HDR10PLUS = 2,
+	VFRAME_SIGNAL_FMT_HDR10PRIME = 3,
+	VFRAME_SIGNAL_FMT_HLG = 4,
+	VFRAME_SIGNAL_FMT_DOVI = 5,
+	VFRAME_SIGNAL_FMT_DOVI_LL = 6,
+	VFRAME_SIGNAL_FMT_MVC = 7
+};
+
+#define SEI_MAGIC_CODE 0x53656920 /* SEI */
+
+/* signal format and sei data */
+struct vframe_src_fmt_s {
+	enum vframe_signal_fmt_e fmt;
+	u32 sei_magic_code;
+	void *sei_ptr;
+	u32 sei_size;
+	bool dual_layer;
+	char *md_buf;
+	char *comp_buf;
+	int md_size;
+	int comp_size;
+	int parse_ret_flags;
+};
+
 enum pic_mode_provider_e {
 	PIC_MODE_PROVIDER_DB = 0,
 	PIC_MODE_PROVIDER_WSS,
@@ -304,6 +355,56 @@ struct vframe_pic_mode_s {
 #define BITDEPTH_MASK (BITDEPTH_YMASK | BITDEPTH_UMASK | BITDEPTH_VMASK)
 #define BITDEPTH_SAVING_MODE	0x1
 #define FULL_PACK_422_MODE		0x2
+
+struct codec_mm_box_s {
+	void    *mmu_box;
+	int     mmu_idx;
+	void    *bmmu_box;
+	int     bmmu_idx;
+};
+
+struct vsif_info {
+	void *addr;
+	unsigned int size;
+};
+
+struct emp_info {
+	void *addr;
+	unsigned int size;
+};
+
+#define MAX_COMPOSER_COUNT 9
+#define AXIS_INFO_COUNT    4
+
+struct componser_info_t {
+	int count;
+	int axis[MAX_COMPOSER_COUNT][AXIS_INFO_COUNT];
+};
+
+struct dcntr_mem_s {
+	u32 index;
+	u32 grd_addr;
+	u32 yds_addr;
+	u32 cds_addr;
+	u32 grd_size;
+	u32 yds_size;
+	u32 cds_size;
+	u32 ds_ratio;
+	u32 pre_out_fmt;//VIDTYPE_VIU_NV12, VIDTYPE_VIU_444
+	u32 yflt_wrmif_length;
+	u32 cflt_wrmif_length;
+	bool free;
+	bool use_org;
+	bool grd_swap_64bit;
+	bool yds_swap_64bit;
+	bool cds_swap_64bit;
+	bool grd_little_endian;
+	bool yds_little_endian;
+	bool cds_little_endian;
+	bool yds_canvas_mode;//0:linear address mode  1:canvas mode
+	bool cds_canvas_mode;
+};
+
 struct vframe_s {
 	u32 index;
 	u32 index_disp;
@@ -339,29 +440,26 @@ struct vframe_s {
 	u32 compHeight;
 	u32 ratio_control;
 	u32 bitdepth;
+	/*
+	 * bit 30: is_dv
+	 * bit 29: present_flag
+	 * bit 28-26: video_format
+	 *	"component", "PAL", "NTSC", "SECAM", "MAC", "unspecified"
+	 * bit 25: range "limited", "full_range"
+	 * bit 24: color_description_present_flag
+	 * bit 23-16: color_primaries
+	 *	"unknown", "bt709", "undef", "bt601", "bt470m", "bt470bg",
+	 *	"smpte170m", "smpte240m", "film", "bt2020"
+	 * bit 15-8: transfer_characteristic
+	 *	"unknown", "bt709", "undef", "bt601", "bt470m", "bt470bg",
+	 *	"smpte170m", "smpte240m", "linear", "log100", "log316",
+	 *	"iec61966-2-4", "bt1361e", "iec61966-2-1", "bt2020-10",
+	 *	"bt2020-12", "smpte-st-2084", "smpte-st-428"
+	 * bit 7-0: matrix_coefficient
+	 *	"GBR", "bt709", "undef", "bt601", "fcc", "bt470bg",
+	 *	"smpte170m", "smpte240m", "YCgCo", "bt2020nc", "bt2020c"
+	 */
 	u32 signal_type;
-/*
- *	   bit 29: present_flag
- *	   bit 28-26: video_format
- *	   "component", "PAL", "NTSC", "SECAM",
- *	   "MAC", "unspecified"
- *	   bit 25: range "limited", "full_range"
- *	   bit 24: color_description_present_flag
- *	   bit 23-16: color_primaries
- *	   "unknown", "bt709", "undef", "bt601",
- *	   "bt470m", "bt470bg", "smpte170m", "smpte240m",
- *	   "film", "bt2020"
- *	   bit 15-8: transfer_characteristic
- *	   "unknown", "bt709", "undef", "bt601",
- *	   "bt470m", "bt470bg", "smpte170m", "smpte240m",
- *	   "linear", "log100", "log316", "iec61966-2-4",
- *	   "bt1361e", "iec61966-2-1", "bt2020-10", "bt2020-12",
- *	   "smpte-st-2084", "smpte-st-428"
- *	   bit 7-0: matrix_coefficient
- *	   "GBR", "bt709", "undef", "bt601",
- *	   "fcc", "bt470bg", "smpte170m", "smpte240m",
- *	   "YCgCo", "bt2020nc", "bt2020c"
- */
 	u32 orientation;
 	u32 video_angle;
 	enum vframe_source_type_e source_type;
@@ -393,6 +491,7 @@ struct vframe_s {
 	long long ready_clock[5];/*ns*/
 	long long ready_clock_hist[2];/*ns*/
 	atomic_t use_cnt;
+	atomic_t use_cnt_pip;
 	u32 frame_dirty;
 	/*
 	 *prog_proc_config:
@@ -416,6 +515,63 @@ struct vframe_s {
 
 	u32 sar_width;
 	u32 sar_height;
+
+	/*****************
+	 * di pulldown info
+	 * bit 3: interlace
+	 * bit 2: flmxx
+	 * bit 1: flm22
+	 * bit 0: flm32
+	 *****************/
+	u32 di_pulldown;
+	u32 di_gmv;
+	u32 di_cm_cnt;
+	u32 axis[4];
+	u32 crop[4];
+	u32 zorder;
+	u32 repeat_count[2];
+	struct file *file_vf;
+	bool rendered;
+
+	struct codec_mm_box_s mm_box;
+	struct vsif_info vsif;
+	struct emp_info emp;
+
+	/* signal format and sei data */
+	struct vframe_src_fmt_s src_fmt;
+	/*for di process NR and cts, storage dec vf*/
+	void *vf_ext;
+
+	u32 dwHeadAddr;
+	u32 dwBodyAddr;
+	bool fgs_valid;
+	u32 fgs_table_adr;
+
+	u32 di_instance_id;
+
+	int sidebind_type;
+	int sidebind_channel_id;
+
+	/*for double write VP9/AV1 vf*/
+	void *mem_dw_handle;
+	struct fence *fence;
+		/*current is dv input*/
+	bool dv_input;
+	/* dv mode crc check:
+	 * true: crc check ok
+	 * false: crc check fail
+	 */
+	bool dv_crc_sts;
+
+	/* currently only for keystone use */
+	unsigned int crc;
+	struct componser_info_t *componser_info;
+	void *decontour_pre;
+
+	u32 hdr10p_data_size;
+	char *hdr10p_data_buf;
+
+	bool discard_dv_data;
 } /*vframe_t */;
 
 #if 0
@@ -426,4 +582,15 @@ int get_curren_frame_para(int *top, int *left, int *bottom, int *right);
 u8 is_vpp_postblend(void);
 
 void pause_video(unsigned char pause_flag);
+
+s32 update_vframe_src_fmt(
+	struct vframe_s *vf, void *sei,
+	u32 size, bool dual_layer,
+	char *prov_name, char *recv_name);
+
+void *get_sei_from_src_fmt(struct vframe_s *vf, u32 *sei_size);
+enum vframe_signal_fmt_e get_vframe_src_fmt(struct vframe_s *vf);
+s32 clear_vframe_src_fmt(struct vframe_s *vf);
+int get_md_from_src_fmt(struct vframe_s *vf);
+
 #endif /* VFRAME_H */

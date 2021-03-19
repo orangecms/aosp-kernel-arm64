@@ -49,8 +49,9 @@ enum {
 struct effect_chipinfo {
 	/* v1 is for G12X(g12a, g12b)
 	 * v2 is for tl1
+	 * v3 is for sm1/tm2
 	 */
-	bool v2;
+	int version;
 	bool reserved_frddr;
 };
 
@@ -95,17 +96,14 @@ int get_aed_dst(void)
 		return p_effect->effect_module;
 }
 
-bool check_aed_v2(void)
+int check_aed_version(void)
 {
 	struct audioeffect *p_effect = get_audioeffects();
 
-	if (!p_effect)
-		return false;
+	if ((!p_effect) || (!p_effect->chipinfo))
+		return -1;
 
-	if (p_effect->chipinfo && p_effect->chipinfo->v2)
-		return true;
-
-	return false;
+	return p_effect->chipinfo->version;
 }
 
 static int eqdrc_clk_set(struct audioeffect *p_effect)
@@ -225,7 +223,7 @@ static int mixer_set_EQ_params(struct snd_kcontrol *kcontrol,
 	char tmp_string[FILTER_PARAM_BYTE];
 	char *p_string = &tmp_string[0];
 	unsigned int *p = &EQ_COEFF[0];
-	int num, i, band_id;
+	int num, i, band_id, version;
 	char *val = (char *)ucontrol->value.bytes.data;
 
 	if (!val)
@@ -247,13 +245,14 @@ static int mixer_set_EQ_params(struct snd_kcontrol *kcontrol,
 		*(p + EQ_FILTER_SIZE_CH) = *p_data;
 	}
 
+	version = check_aed_version();
 	p = &EQ_COEFF[band_id*FILTER_PARAM_SIZE];
-	aed_set_ram_coeff((EQ_FILTER_RAM_ADD +
+	aed_set_ram_coeff(version, (EQ_FILTER_RAM_ADD +
 		band_id*FILTER_PARAM_SIZE),
 		FILTER_PARAM_SIZE, p);
 
 	p = &EQ_COEFF[band_id*FILTER_PARAM_SIZE + EQ_FILTER_SIZE_CH];
-	aed_set_ram_coeff((EQ_FILTER_RAM_ADD +
+	aed_set_ram_coeff(version, (EQ_FILTER_RAM_ADD +
 		EQ_FILTER_SIZE_CH + band_id*FILTER_PARAM_SIZE),
 		FILTER_PARAM_SIZE, p);
 
@@ -305,7 +304,7 @@ static int mixer_set_crossover_params(struct snd_kcontrol *kcontrol,
 		*p++ = *p_data++;
 
 	p = &CROSSOVER_COEFF[band_id*FILTER_PARAM_SIZE];
-	aed_set_ram_coeff((CROSSOVER_FILTER_RAM_ADD +
+	aed_set_ram_coeff(check_aed_version(), (CROSSOVER_FILTER_RAM_ADD +
 		band_id*FILTER_PARAM_SIZE),
 		FILTER_PARAM_SIZE, p);
 
@@ -416,17 +415,19 @@ static int mixer_set_fullband_DRC_params(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static void aed_set_filter_data(void)
+static void aed_set_filter_data(int version)
 {
 	int *p;
 
 	/* set default filter param*/
 	p = &DC_CUT_COEFF[0];
-	aed_set_ram_coeff(DC_CUT_FILTER_RAM_ADD, DC_CUT_FILTER_SIZE, p);
+	aed_init_ram_coeff(version,
+			   DC_CUT_FILTER_RAM_ADD, DC_CUT_FILTER_SIZE, p);
 	p = &EQ_COEFF[0];
-	aed_set_ram_coeff(EQ_FILTER_RAM_ADD, EQ_FILTER_SIZE, p);
+	aed_init_ram_coeff(version, EQ_FILTER_RAM_ADD, EQ_FILTER_SIZE, p);
 	p = &CROSSOVER_COEFF[0];
-	aed_set_ram_coeff(CROSSOVER_FILTER_RAM_ADD, CROSSOVER_FILTER_SIZE, p);
+	aed_init_ram_coeff(version,
+			   CROSSOVER_FILTER_RAM_ADD, CROSSOVER_FILTER_SIZE, p);
 
 }
 
@@ -507,6 +508,10 @@ static const struct snd_kcontrol_new snd_effect_controls[] = {
 		AED_EQ_VOLUME, 16, 0x3FF, 1,
 		mixer_aed_read, mixer_aed_write,
 		master_vol_tlv),
+
+	SOC_SINGLE_EXT("AED Clip THD",
+		AED_CLIP_THD, 0, 0x7FFFFF, 0,
+		mixer_aed_read, mixer_aed_write),
 };
 
 int card_add_effect_v2_kcontrols(struct snd_soc_card *card)
@@ -531,7 +536,17 @@ int card_add_effect_v2_kcontrols(struct snd_soc_card *card)
 }
 
 static struct effect_chipinfo tl1_effect_chipinfo = {
-	.v2 = true,
+	.version = VERSION2,
+	.reserved_frddr = true,
+};
+
+static struct effect_chipinfo sm1_effect_chipinfo = {
+	.version = VERSION3,
+	.reserved_frddr = true,
+};
+
+static struct effect_chipinfo tm2_revb_effect_chipinfo = {
+	.version = VERSION4,
 	.reserved_frddr = true,
 };
 
@@ -544,8 +559,12 @@ static const struct of_device_id effect_device_id[] = {
 		.data       = &tl1_effect_chipinfo,
 	},
 	{
-		.compatible = "amlogic, tl1-effect",
-		.data       = &tl1_effect_chipinfo,
+		.compatible = "amlogic, snd-effect-v3",
+		.data       = &sm1_effect_chipinfo,
+	},
+	{
+		.compatible = "amlogic, snd-effect-v4",
+		.data       = &tm2_revb_effect_chipinfo,
 	},
 	{}
 };
@@ -557,7 +576,7 @@ static int effect_platform_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct effect_chipinfo *p_chipinfo;
 	int lane_mask = -1, channel_mask = -1, eqdrc_module = -1;
-	int ret;
+	int ret, version;
 
 	pr_info("%s, line:%d\n", __func__, __LINE__);
 
@@ -604,7 +623,6 @@ static int effect_platform_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev,
 			"Can't set eqdrc clock parent clock\n");
-		ret = PTR_ERR(p_effect->clk);
 		return ret;
 	}
 
@@ -650,8 +668,17 @@ static int effect_platform_probe(struct platform_device *pdev)
 	p_effect->ch_mask          = channel_mask;
 	p_effect->effect_module    = eqdrc_module;
 
+	p_effect->dev = dev;
+	s_effect = p_effect;
+	dev_set_drvdata(&pdev->dev, p_effect);
+
 	/*set eq/drc module lane & channels*/
-	aed_set_lane_and_channels(lane_mask, channel_mask);
+	version = check_aed_version();
+	if (version > VERSION2)
+		aed_set_lane_and_channels_v3(lane_mask, channel_mask);
+	else
+		aed_set_lane_and_channels(lane_mask, channel_mask);
+
 	/*set master & channel volume gain to 0dB*/
 	aed_set_volume(0xc0, 0x30, 0x30);
 	/*set default mixer gain*/
@@ -659,7 +686,7 @@ static int effect_platform_probe(struct platform_device *pdev)
 	/*all 20 bands for EQ1*/
 	aed_eq_taps(EQ_BAND);
 	/*set default filter param*/
-	aed_set_filter_data();
+	aed_set_filter_data(version);
 	/*set multi-band drc param*/
 	aed_set_multiband_drc_param();
 	/*set multi/full-band drc data*/
@@ -668,10 +695,6 @@ static int effect_platform_probe(struct platform_device *pdev)
 	aed_set_fullband_drc_param(2);
 	/*set EQ/DRC module enable*/
 	aml_set_aed(1, p_effect->effect_module);
-
-	p_effect->dev = dev;
-	s_effect = p_effect;
-	dev_set_drvdata(&pdev->dev, p_effect);
 
 	if (p_effect->chipinfo &&
 		p_effect->chipinfo->reserved_frddr) {

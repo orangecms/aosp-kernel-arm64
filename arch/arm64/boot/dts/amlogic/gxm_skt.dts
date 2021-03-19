@@ -53,9 +53,10 @@
 		ramoops@0x07400000 {
 			compatible = "ramoops";
 			reg = <0x0 0x07400000 0x0 0x00100000>;
-			record-size = <0x8000>;
-			console-size = <0x8000>;
-			ftrace-size = <0x20000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x80000>;
+			pmsg-size = <0x20000>;
 		};
 
 		secmon_reserved:linux,secmon {
@@ -145,6 +146,13 @@
 			alignment = <0x0 0x100000>;
 			//no-map;
 		};
+	};
+
+	cma_shrinker {
+		compatible = "amlogic, cma-shrinker";
+		status = "okay";
+		adj  = <0 100 200 250 900 950>;
+		free = <7680 24288 28528 32600 32768 36624>;
 	};
 
 	sd_emmc_c: emmc@d0074000 {
@@ -472,7 +480,7 @@
 				min_state = <400>;
 				dyn_coeff = <437>;
 				cluster_id = <0>;
-				node_name = "gpufreq_cool0";
+				node_name = "t82x";
 				device_type = "gpufreq";
 			};
 			gpucore_cool {
@@ -493,9 +501,6 @@
 			#cooling-cells = <2>; /* min followed by max */
 		};
 		cpucore_cool1:cpucore_cool1 {
-			#cooling-cells = <2>; /* min followed by max */
-		};
-		gpufreq_cool0:gpufreq_cool0 {
 			#cooling-cells = <2>; /* min followed by max */
 		};
 		gpucore_cool0:gpucore_cool0 {
@@ -556,7 +561,7 @@
 				};
 				gpufreq_cooling_map {
 					trip = <&control>;
-					cooling-device = <&gpufreq_cool0 0 4>;
+					cooling-device = <&t82x_gpu 0 4>;
 					contribution = <1024>;
 				};
 				gpucore_cooling_map {

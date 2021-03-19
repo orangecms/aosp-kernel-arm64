@@ -164,25 +164,6 @@ out:
  * Receive data handling
  *****************************************************************************/
 
-static int pppol2tp_recv_payload_hook(struct sk_buff *skb)
-{
-	/* Skip PPP header, if present.	 In testing, Microsoft L2TP clients
-	 * don't send the PPP header (PPP header compression enabled), but
-	 * other clients can include the header. So we cope with both cases
-	 * here. The PPP header is always FF03 when using L2TP.
-	 *
-	 * Note that skb->data[] isn't dereferenced from a u16 ptr here since
-	 * the field may be unaligned.
-	 */
-	if (!pskb_may_pull(skb, 2))
-		return 1;
-
-	if ((skb->data[0] == PPP_ALLSTATIONS) && (skb->data[1] == PPP_UI))
-		skb_pull(skb, 2);
-
-	return 0;
-}
-
 /* Receive message. This is the recvmsg for the PPPoL2TP socket.
  */
 static int pppol2tp_recvmsg(struct socket *sock, struct msghdr *msg,
@@ -227,6 +208,17 @@ static void pppol2tp_recv(struct l2tp_session *session, struct sk_buff *skb, int
 	sk = ps->sock;
 	if (sk == NULL)
 		goto no_sock;
+
+	/* If the first two bytes are 0xFF03, consider that it is the PPP's
+	 * Address and Control fields and skip them. The L2TP module has always
+	 * worked this way, although, in theory, the use of these fields should
+	 * be negociated and handled at the PPP layer. These fields are
+	 * constant: 0xFF is the All-Stations Address and 0x03 the Unnumbered
+	 * Information command with Poll/Final bit set to zero (RFC 1662).
+	 */
+	if (pskb_may_pull(skb, 2) && skb->data[0] == PPP_ALLSTATIONS &&
+	    skb->data[1] == PPP_UI)
+		skb_pull(skb, 2);
 
 	if (sk->sk_state & PPPOX_BOUND) {
 		struct pppox_sock *po;
@@ -686,9 +678,6 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 			goto end;
 	}
 
-	if (tunnel->recv_payload_hook == NULL)
-		tunnel->recv_payload_hook = pppol2tp_recv_payload_hook;
-
 	if (tunnel->peer_tunnel_id == 0)
 		tunnel->peer_tunnel_id = peer_tunnel_id;
 
@@ -795,25 +784,20 @@ end:
 
 #ifdef CONFIG_L2TP_V3
 
-/* Called when creating sessions via the netlink interface.
- */
-static int pppol2tp_session_create(struct net *net, u32 tunnel_id, u32 session_id, u32 peer_session_id, struct l2tp_session_cfg *cfg)
+/* Called when creating sessions via the netlink interface. */
+static int pppol2tp_session_create(struct net *net, struct l2tp_tunnel *tunnel,
+				   u32 session_id, u32 peer_session_id,
+				   struct l2tp_session_cfg *cfg)
 {
 	int error;
-	struct l2tp_tunnel *tunnel;
 	struct l2tp_session *session;
 	struct pppol2tp_session *ps;
 
-	tunnel = l2tp_tunnel_find(net, tunnel_id);
-
-	/* Error if we can't find the tunnel */
-	error = -ENOENT;
-	if (tunnel == NULL)
-		goto out;
-
 	/* Error if tunnel socket is not prepped */
-	if (tunnel->sock == NULL)
+	if (!tunnel->sock) {
+		error = -ENOENT;
 		goto out;
+	}
 
 	/* Default MTU values. */
 	if (cfg->mtu == 0)

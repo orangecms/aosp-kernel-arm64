@@ -93,16 +93,19 @@ void __attribute__((unused)) nand_info_page_prepare(
 	struct nand_chip *chip = &aml_chip->chip;
 	struct mtd_info *mtd = aml_chip->mtd;
 	struct aml_nand_chip *aml_chip_normal;
-	int nand_read_info;
-	u32 configure_data;
 	struct _nand_page0 *p_nand_page0 = NULL;
+	struct _nand_page0_sc2 *p_nand_page0_sc2 = NULL;
 	struct _ext_info *p_ext_info = NULL;
 	struct _fip_info *p_fip_info = NULL;
 	struct nand_setup *p_nand_setup = NULL;
+	struct nand_setup_sc2 *p_nand_setup_sc2 = NULL;
+	u32 configure_data;
+	int cpu_type = get_cpu_type();
 	int each_boot_pages, boot_num, bbt_pages;
 	uint32_t pages_per_blk_shift, bbt_size;
 	uint32_t ddrp_start_block = 0;
 
+	memset(page0_buf, 0x0, mtd->writesize);
 	pages_per_blk_shift = (chip->phys_erase_shift - chip->page_shift);
 	aml_chip_normal = mtd_to_nand_chip(nand_info[1]);
 	bbt_size = aml_chip_normal->aml_nandbbt_info->size;
@@ -114,43 +117,43 @@ void __attribute__((unused)) nand_info_page_prepare(
 			1 : aml_chip->boot_copy_num;
 		each_boot_pages = BOOT_TOTAL_PAGES/boot_num;
 	}
-
-	p_nand_page0 = (struct _nand_page0 *) page0_buf;
-	p_nand_setup = &p_nand_page0->nand_setup;
-	p_ext_info = &p_nand_page0->ext_info;
-	p_fip_info = &p_nand_page0->fip_info;
-
 	configure_data = NFC_CMD_N2M(aml_chip->ran_mode,
 			aml_chip->bch_mode, 0, (chip->ecc.size >> 3),
 			chip->ecc.steps);
-	/* en_slc mode will not be used on slc */
-	/* en_slc = 0; */
-
-	memset(p_nand_page0, 0x0, sizeof(struct _nand_page0));
-	/* info_cfg->ext = (configure_data | (1<<23) |(1<<22) | (2<<20)); */
-	/*
-	 *p_nand_setup->cfg.d32 =
-	 *(configure_data|(1<<23) | (1<<22) | (2<<20) | (1<<19));
-	 **/
-	/* randomizer mode depends on chip's cofig */
-	p_nand_setup->cfg.d32 = (configure_data|(1<<23) | (1<<22) | (2<<20));
-	pr_info("cfg.d32 0x%x\n", p_nand_setup->cfg.d32);
-	/* need finish here for romboot retry */
-	p_nand_setup->id = 0;
-	p_nand_setup->max = 0;
-
-	memset(p_nand_page0->page_list,
-		0,
-		NAND_PAGELIST_CNT);
-	/* chip_num occupy the lowest 2 bit */
-	nand_read_info = controller->chip_num;
-
-	p_ext_info->read_info = nand_read_info;
+	ddrp_start_block = aml_chip_normal->aml_nandddr_info->start_block;
+	if (cpu_type == MESON_CPU_MAJOR_ID_SC2) {
+		p_nand_page0_sc2 = (struct _nand_page0_sc2 *)page0_buf;
+		p_nand_setup_sc2 = &p_nand_page0_sc2->nand_setup;
+		p_ext_info = &p_nand_page0_sc2->ext_info;
+		p_nand_setup_sc2->cfg.d32 = configure_data;
+		p_nand_setup_sc2->cfg.b.page_list = 0;
+		p_nand_setup_sc2->cfg.b.new_type = 0;
+		p_fip_info = &p_nand_page0_sc2->fip_info;
+		pr_info("sc2 cfg.d32 0x%x\n", p_nand_setup_sc2->cfg.d32);
+		p_nand_page0_sc2->ddrp_start_page =
+		(ddrp_start_block << pages_per_blk_shift)
+		+ aml_chip_normal->aml_nandddr_info->valid_node->phy_page_addr;
+		pr_info("ddrp_start_page = 0x%x ddr_start_block = 0x%x\n",
+			p_nand_page0_sc2->ddrp_start_page, ddrp_start_block);
+	} else {
+		p_nand_page0 = (struct _nand_page0 *)page0_buf;
+		p_nand_setup = &p_nand_page0->nand_setup;
+		p_ext_info = &p_nand_page0->ext_info;
+		p_fip_info = &p_nand_page0->fip_info;
+		p_nand_setup->cfg.d32 =
+			(configure_data | (1 << 23) | (1 << 22) | (2 << 20));
+		pr_info("cfg.d32 0x%x\n", p_nand_setup->cfg.d32);
+		/* need finish here for romboot retry */
+		p_nand_setup->id = 0;
+		p_nand_setup->max = 0;
+		memset(p_nand_page0->page_list, 0, NAND_PAGELIST_CNT);
+		p_nand_page0->ddrp_start_page =
+		(ddrp_start_block << pages_per_blk_shift)
+		+ aml_chip_normal->aml_nandddr_info->valid_node->phy_page_addr;
+		pr_info("ddrp_start_page = 0x%x ddr_start_block = 0x%x\n",
+			p_nand_page0->ddrp_start_page, ddrp_start_block);
+	}
 	p_ext_info->page_per_blk = aml_chip->block_size / aml_chip->page_size;
-	/* fixme, only ce0 is enabled! */
-	p_ext_info->ce_mask = 0x01;
-	/* xlc is not in using for now */
-	p_ext_info->xlc = 1;
 	p_ext_info->boot_num = boot_num;
 	p_ext_info->each_boot_pages = each_boot_pages;
 	bbt_pages =
@@ -158,12 +161,6 @@ void __attribute__((unused)) nand_info_page_prepare(
 	p_ext_info->bbt_occupy_pages = bbt_pages;
 	p_ext_info->bbt_start_block =
 		(BOOT_TOTAL_PAGES >> pages_per_blk_shift) + NAND_GAP_BLOCK_NUM;
-	ddrp_start_block = aml_chip_normal->aml_nandddr_info->start_block;
-	p_nand_page0->ddrp_start_page =
-		(ddrp_start_block << pages_per_blk_shift)
-		+ aml_chip_normal->aml_nandddr_info->valid_node->phy_page_addr;
-	pr_info("ddrp_start_page = 0x%x ddr_start_block = 0x%x\n",
-		p_nand_page0->ddrp_start_page, ddrp_start_block);
 	/* fill descrete infos */
 	if (aml_chip->bl_mode) {
 		p_fip_info->version = 1;
@@ -174,11 +171,10 @@ void __attribute__((unused)) nand_info_page_prepare(
 			p_fip_info->version, p_fip_info->mode,
 			p_fip_info->fip_start);
 	}
-	/* pr_info("new_type = 0x%x\n", p_ext_info->new_type); */
 	pr_info("page_per_blk = 0x%x, bbt_pages 0x%x\n",
-		p_ext_info->page_per_blk, bbt_pages);
+					p_ext_info->page_per_blk, bbt_pages);
 	pr_info("boot_num = %d each_boot_pages = %d\n", boot_num,
-		each_boot_pages);
+					each_boot_pages);
 }
 
 /* mtd support interface:
@@ -664,13 +660,13 @@ WRITE_BAD_BLOCK:
 /* extra char device for bootloader */
 #define AML_CHAR_BOOT_DEV	(0)
 #if (AML_CHAR_BOOT_DEV)
-int erase_bootloader(struct mtd_info *mtd, int boot_num)
+int erase_bootloader(struct mtd_info *mtd, uint32_t boot_num)
 {
 	struct nand_chip *chip = mtd->priv;
 	struct aml_nand_chip *aml_chip = mtd_to_nand_chip(mtd);
 	int page, each_boot_pages, boot_copy_num;
 	int pages_per_block;
-	int start_page, end_page;
+	uint32_t start_page, end_page;
 	int status;
 
 	if (aml_chip->bl_mode)
@@ -817,6 +813,9 @@ static ssize_t uboot_read(struct file *file,
 	chip->select_chip(mtd, -1);
 	nand_release_device(mtd);
 	ret = copy_to_user(buf, data_buf, count);
+	if (ret)
+		count = -EFAULT;
+
 err_exit0:
 	vfree(data_buf);
 
@@ -858,6 +857,11 @@ static ssize_t uboot_write(struct file *file, const char __user *buf,
 	}
 
 	ret = copy_from_user(data_buf, buf, count);
+	if (ret) {
+		count = -EFAULT;
+		goto err_exit0;
+	}
+
 	addr = *ppos;
 	buffer = data_buf;
 	nand_get_device(mtd, FL_WRITING);
@@ -912,8 +916,9 @@ static int boot_ioctl(struct file *file, u_int cmd, u_long arg)
 	struct uboot_file_info *ufi = file->private_data;
 	struct mtd_info *mtd = ufi->mtd;
 	void __user *argp = (void __user *)arg;
-	int ret = 0, erase_boot_num = 0;
+	int ret = 0;
 	u_long size;
+	uint32_t erase_boot_num = 0;
 
 	pr_debug("boot_ioctl\n");
 
@@ -1009,7 +1014,7 @@ static long boot_compat_ioctl(struct file *file, uint32_t cmd,
 	}
 	case BOOT_ERASE_INFO32:
 	{
-		int erase_boot_num;
+		uint32_t erase_boot_num;
 
 		if (copy_from_user(&erase_boot_num, argp, sizeof(int)))
 			ret = -EFAULT;

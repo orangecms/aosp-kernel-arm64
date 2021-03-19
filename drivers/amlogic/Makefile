@@ -9,7 +9,7 @@
 
 ifndef CONFIG_KASAN
 KBUILD_CFLAGS += -Wlarger-than=28792
-KBUILD_CFLAGS += -Wstack-usage=1856
+KBUILD_CFLAGS += -Wstack-usage=1956
 else
 ifeq ($(call cc-ifversion, -lt, 0500, y), y)
     $(error -----GCC VERSION TOO SMALL FOR KASAN -----)
@@ -76,6 +76,8 @@ obj-$(CONFIG_AMLOGIC_VRTC)		+= vrtc/
 
 obj-$(CONFIG_AMLOGIC_SMARTCARD)		+= smartcard/
 
+obj-$(CONFIG_AMLOGIC_SMARTCARD)		+= smartcard_sc2/
+
 obj-$(CONFIG_AMLOGIC_CEC)		+= cec/
 
 obj-$(CONFIG_AMLOGIC_UNIFYKEY)    += unifykey/
@@ -89,6 +91,8 @@ obj-$(CONFIG_AMLOGIC_AMAUDIO) += amaudio/
 obj-$(CONFIG_AMLOGIC_AMAUDIO2) += amaudio2/
 
 obj-$(CONFIG_AMLOGIC_AUDIO_INFO) += audioinfo/
+
+obj-$(CONFIG_AMLKARAOKE)		+= amlkaraoke/
 
 obj-$(CONFIG_AMLOGIC_SUSPEND)	+= pm/
 
@@ -116,7 +120,7 @@ obj-$(CONFIG_AMLOGIC_IIO)       += iio/
 
 obj-$(CONFIG_AMLOGIC_DDR_TOOL)       += ddr_tool/
 
-obj-$(CONFIG_DRM_MESON)	+= drm/
+obj-$(CONFIG_AMLOGIC_DRM)	+= drm/
 
 obj-$(CONFIG_AMLOGIC_M8B_SM) += secure_monitor/
 
@@ -139,3 +143,15 @@ obj-$(CONFIG_MTD_SPI_NOR) += spi-nor/
 obj-$(CONFIG_DOLBY_FW) += dolby_fw/
 
 obj-$(CONFIG_AMLOGIC_IRCUT) += ircut/
+
+obj-$(CONFIG_AMLOGIC_PIXEL_PROBE) += pixel_probe/
+
+obj-$(CONFIG_AMLOGIC_FIRMWARE) += firmware/
+
+obj-$(CONFIG_AMLOGIC_DVB_COMPAT) += dvb/
+
+obj-$(CONFIG_AMLOGIC_RESET_MESON) += reset/
+
+obj-$(CONFIG_AMLOGIC_DVB) += dvb/
+
+obj-$(CONFIG_AMLOGIC_DVB_DMX)		+= dvb/

@@ -229,6 +229,7 @@ struct mmc_host {
 	unsigned int		f_init;
 #ifdef CONFIG_AMLOGIC_MMC
 	u8 first_init_flag;
+	int	wifi_down_f;
 #endif
 	u32			ocr_avail;
 	u32			ocr_avail_sdio;	/* SDIO-specific OCR */
@@ -582,5 +583,7 @@ static inline void mmc_retune_recheck(struct mmc_host *host)
 
 void mmc_retune_pause(struct mmc_host *host);
 void mmc_retune_unpause(struct mmc_host *host);
+
+int aml_read_tuning_para(struct mmc_host *mmc);
 
 #endif /* LINUX_MMC_HOST_H */

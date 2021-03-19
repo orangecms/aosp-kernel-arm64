@@ -49,6 +49,29 @@
 #define TUNINGMODE_EXTLEVEL5_DISABLE     0x10
 #define TUNINGMODE_EL_FORCEDDISABLE      0x20
 
+enum core1_switch_type {
+	NO_SWITCH = 0,
+	SWITCH_BEFORE_DVCORE_1,
+	SWITCH_BEFORE_DVCORE_2,
+	SWITCH_AFTER_DVCORE,
+};
+
+enum core3_switch_type {
+	CORE3_AFTER_WM = 0,
+	CORE3_AFTER_OSD1_HDR,
+	CORE3_AFTER_VD2_HDR,
+};
+
+enum core_type {
+	DOLBY_TVCORE = 0,
+	DOLBY_CORE1A,
+	DOLBY_CORE1B,
+	DOLBY_CORE1C,
+	DOLBY_CORE2A,
+	DOLBY_CORE2B,
+	DOLBY_CORE2C,
+};
+
 /*! @brief Output CSC configuration.*/
 # pragma pack(push, 1)
 struct TgtOutCscCfg {
@@ -192,7 +215,10 @@ enum signal_format_e {
 	FORMAT_HDR10 = 1,
 	FORMAT_SDR = 2,
 	FORMAT_DOVI_LL = 3,
-	FORMAT_SDR_2020 = 4
+	FORMAT_HLG = 4,
+	FORMAT_HDR10PLUS = 5,
+	FORMAT_SDR_2020 = 6,
+	FORMAT_MVC = 7
 };
 
 enum priority_mode_e {
@@ -359,7 +385,7 @@ struct dm_lut_ipcore_s {
 
 /** @brief hdmi metadata for IPCORE 3 */
 struct md_reister_ipcore_3_s {
-	uint32_t raw_metadata[128];
+	uint32_t raw_metadata[512];
 	uint32_t size;
 };
 
@@ -531,6 +557,8 @@ enum cpuID_e {
 	_CPU_MAJOR_ID_TXLX,
 	_CPU_MAJOR_ID_G12,
 	_CPU_MAJOR_ID_TM2,
+	_CPU_MAJOR_ID_TM2_REVB,
+	_CPU_MAJOR_ID_SC2,
 	_CPU_MAJOR_ID_UNKNOWN,
 };
 
@@ -629,14 +657,16 @@ struct dolby_vision_func_s {
 extern int register_dv_functions(const struct dolby_vision_func_s *func);
 extern int unregister_dv_functions(void);
 #ifndef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
-#define _VSYNC_WR_MPEG_REG(adr, val) WRITE_VPP_REG(adr, val)
-#define _VSYNC_RD_MPEG_REG(adr) READ_VPP_REG(adr)
-#define _VSYNC_WR_MPEG_REG_BITS(adr, val, start, len) \
+#define VSYNC_WR_MPEG_REG(adr, val) WRITE_VPP_REG(adr, val)
+#define VSYNC_RD_MPEG_REG(adr) READ_VPP_REG(adr)
+#define VSYNC_WR_MPEG_REG_BITS(adr, val, start, len) \
 	WRITE_VPP_REG_BITS(adr, val, start, len)
 #else
-extern int _VSYNC_WR_MPEG_REG_BITS(u32 adr, u32 val, u32 start, u32 len);
-extern u32 _VSYNC_RD_MPEG_REG(u32 adr);
-extern int _VSYNC_WR_MPEG_REG(u32 adr, u32 val);
+extern int VSYNC_WR_MPEG_REG_BITS(u32 adr, u32 val, u32 start, u32 len);
+extern u32 VSYNC_RD_MPEG_REG(u32 adr);
+extern int VSYNC_WR_MPEG_REG(u32 adr, u32 val);
 #endif
-
+void dv_mem_power_on(enum vpu_mod_e mode);
+void dv_mem_power_off(enum vpu_mod_e mode);
+int get_dv_mem_power_flag(enum vpu_mod_e mode);
 #endif

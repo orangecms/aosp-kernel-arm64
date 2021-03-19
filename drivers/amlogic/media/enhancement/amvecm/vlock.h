@@ -23,9 +23,15 @@
 #include <linux/amlogic/media/vfm/vframe.h>
 #include "linux/amlogic/media/amvecm/ve.h"
 
-#define VLOCK_VER "Ref.2019/5/20"
+#define VLOCK_VER "Ref.2020/03/27: improve auto pll mode for tm2 verb"
 
 #define VLOCK_REG_NUM	33
+
+struct vdin_sts {
+	unsigned int lcnt_sts;
+	unsigned int com_sts0;
+	unsigned int com_sts1;
+};
 
 struct vlock_log_s {
 	unsigned int pll_m;
@@ -81,7 +87,15 @@ struct stvlock_sig_sts {
 	struct vecm_match_data_s *dtdata;
 	u32 val_frac;
 	u32 val_m;
+	struct vdin_sts vdinsts;
 };
+
+#define diff(a, b)	\
+	({typeof(a) x = (a);\
+	  typeof(b) y = (b);\
+	  (x > y) ? (x - y) : (y - x);\
+	  })
+
 extern void amve_vlock_process(struct vframe_s *vf);
 extern void amve_vlock_resume(void);
 extern void vlock_param_set(unsigned int val, enum vlock_param_e sel);
@@ -90,7 +104,6 @@ extern void vlock_reg_dump(void);
 extern void vlock_log_start(void);
 extern void vlock_log_stop(void);
 extern void vlock_log_print(void);
-extern int phase_lock_check(void);
 
 #define VLOCK_STATE_NULL 0
 #define VLOCK_STATE_ENABLE_STEP1_DONE 1
@@ -130,6 +143,9 @@ enum VLOCK_MD {
 #define IS_AUTO_PLL_MODE(md) (md & \
 					VLOCK_MODE_AUTO_PLL)
 
+#define IS_AUTO_ENC_MODE(md) (md & \
+							VLOCK_MODE_AUTO_ENC)
+
 #define IS_MANUAL_ENC_MODE(md) (md & \
 				VLOCK_MODE_MANUAL_ENC)
 
@@ -139,6 +155,14 @@ enum VLOCK_MD {
 #define IS_MANUAL_SOFTENC_MODE(md) (md & \
 				VLOCK_MODE_MANUAL_SOFT_ENC)
 
+
+enum vlock_pll_sel {
+	vlock_pll_sel_tcon = 0,
+	vlock_pll_sel_hdmi,
+	vlock_pll_sel_disable = 0xf,
+};
+
+
 #define VLOCK_START_CNT		50
 #define VLOCK_WORK_CNT	(VLOCK_START_CNT + 10)
 
@@ -147,8 +171,13 @@ enum VLOCK_MD {
 
 #define XTAL_VLOCK_CLOCK   24000000/*vlock use xtal clock*/
 
-#define VLOCK_SUPPORT_HDMI (1 << 0)
-#define VLOCK_SUPPORT_CVBS (1 << 1)
+#define VLOCK_SUPPORT_HDMI 0x1
+#define VLOCK_SUPPORT_CVBS 0x2
+/*25 to 50, 30 to 60*/
+#define VLOCK_SUPPORT_1TO2 0x4
+
+#define VLOCK_SUP_MODE	(VLOCK_SUPPORT_HDMI | VLOCK_SUPPORT_CVBS | \
+			 VLOCK_SUPPORT_1TO2)
 
 /*10s for 60hz input,vlock pll stabel cnt limit*/
 #define VLOCK_PLL_STABLE_LIMIT	600
@@ -196,4 +225,9 @@ extern void vlock_set_phase_en(u32 en);
 extern void lcd_vlock_m_update(unsigned int vlock_m);
 extern void lcd_vlock_farc_update(unsigned int vlock_farc);
 extern int lcd_set_ss(unsigned int level, unsigned int freq, unsigned int mode);
+ssize_t vlock_debug_store(struct class *cla,
+				struct class_attribute *attr,
+				const char *buf, size_t count);
+ssize_t vlock_debug_show(struct class *cla,
+			struct class_attribute *attr, char *buf);
 

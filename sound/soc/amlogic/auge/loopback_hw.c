@@ -22,35 +22,39 @@
 #include "regs.h"
 #include "iomap.h"
 
+static unsigned int get_tdmin_id_from_lb_src(enum datalb_src lb_src)
+{
+	return lb_src % TDMINLB_PAD_TDMINA;
+}
 
-void tdminlb_set_clk(int datatlb_src, int sclk_div, int ratio, bool enable)
+void tdminlb_set_clk(enum datalb_src lb_src,
+		     int sclk_div, int ratio, bool enable)
 {
 	unsigned int bclk_sel, fsclk_sel;
 	unsigned int tdmin_src;
 
 	/* config for external codec */
-	if (datatlb_src >= 3) {
-		unsigned int clk_id = datatlb_src - 3;
+	if (lb_src >= TDMINLB_PAD_TDMINA) {
+		unsigned int id = get_tdmin_id_from_lb_src(lb_src);
 		unsigned int offset, reg;
 		unsigned int fsclk_hi;
 
 		fsclk_hi = ratio / 2;
-		bclk_sel = clk_id;
-		fsclk_sel = clk_id;
+		bclk_sel = id;
+		fsclk_sel = id;
 
 		/*sclk, lrclk*/
 		offset = EE_AUDIO_MST_B_SCLK_CTRL0 - EE_AUDIO_MST_A_SCLK_CTRL0;
-		reg = EE_AUDIO_MST_A_SCLK_CTRL0 + offset * clk_id;
+		reg = EE_AUDIO_MST_A_SCLK_CTRL0 + offset * id;
 		audiobus_update_bits(reg,
 			0x3 << 30 | 0x3ff << 20 | 0x3ff<<10 | 0x3ff,
 			(enable ? 0x3 : 0x0) << 30
 			| sclk_div << 20 | fsclk_hi << 10
 			| ratio);
 
-
-		tdmin_src = datatlb_src - 3;
+		tdmin_src = id;
 	} else
-		tdmin_src = datatlb_src;
+		tdmin_src = lb_src;
 
 	audiobus_update_bits(
 		EE_AUDIO_CLK_TDMIN_LB_CTRL,
@@ -72,11 +76,11 @@ void tdminlb_set_format(int i2s_fmt)
 {
 	audiobus_update_bits(EE_AUDIO_TDMIN_LB_CTRL,
 		0x1 << 30,
-		i2s_fmt << 30 /* 0:tdm mode; 1: i2s mode; */
+		!!i2s_fmt << 30 /* 0:tdm mode; 1: i2s mode; */
 	);
 }
 
-void tdminlb_set_ctrl(int src)
+void tdminlb_set_ctrl(enum datalb_src src)
 {
 	audiobus_update_bits(
 		EE_AUDIO_TDMIN_LB_CTRL,
@@ -101,14 +105,13 @@ static void tdminlb_set_lane_mask(int lane, int mask)
 	audiobus_write(EE_AUDIO_TDMIN_LB_MASK0 + lane, mask);
 }
 
-void tdminlb_set_lanemask_and_chswap(int swap, int lane_mask)
+void tdminlb_set_lanemask_and_chswap(int swap, int lane_mask, unsigned int mask)
 {
-	unsigned int mask;
 	unsigned int i;
 
-	pr_debug("tdmin_lb lane swap:0x%x mask:0x%x\n", swap, lane_mask);
-
-	mask = 0x3; /* i2s format */
+	pr_debug
+		("%s() lane swap:0x%x lane mask:0x%x, chmask:%#x\n",
+		__func__, swap, lane_mask, mask);
 
 	/* channel swap */
 	audiobus_write(EE_AUDIO_TDMIN_LB_SWAP0, swap);
@@ -130,6 +133,14 @@ void lb_set_datain_src(int id, int src)
 	int reg = EE_AUDIO_LB_A_CTRL0 + offset * id;
 
 	audiobus_update_bits(reg, 0x7 << 0, src);
+}
+
+void lb_set_mode(int id, enum lb_out_rate rate)
+{
+	int offset = EE_AUDIO_LB_B_CTRL0 - EE_AUDIO_LB_A_CTRL0;
+	int reg = EE_AUDIO_LB_A_CTRL0 + offset * id;
+
+	audiobus_update_bits(reg, 0x1 << 30, rate << 30);
 }
 
 void lb_set_datain_cfg(int id, struct data_cfg *datain_cfg)
@@ -182,8 +193,9 @@ void lb_set_datalb_cfg(int id, struct data_cfg *datalb_cfg)
 
 	if (datalb_cfg->ch_ctrl_switch) {
 		audiobus_update_bits(reg,
-			0x1 << 29 | 0x7 << 13 | 0x1f << 8
-			| 0x1f << 3 | 0x1 << 1,
+			0x3 << 30 | 0x1 << 29 | 0x7 << 13 |
+			0x1f << 8 | 0x1f << 3 | 0x1 << 1,
+			datalb_cfg->resample_enable << 30 |
 			datalb_cfg->ext_signed << 29 |
 			datalb_cfg->type       << 13 |
 			datalb_cfg->m          << 8  |
@@ -209,10 +221,21 @@ void lb_set_datalb_cfg(int id, struct data_cfg *datalb_cfg)
 		);
 }
 
-void lb_enable(int id, bool enable)
+void lb_enable(int id, bool enable, bool chnum_en)
 {
 	int offset = EE_AUDIO_LB_B_CTRL0 - EE_AUDIO_LB_A_CTRL0;
 	int reg = EE_AUDIO_LB_A_CTRL0 + offset * id;
 
 	audiobus_update_bits(reg, 0x1 << 31, enable << 31);
+	lb_set_chnum_en(id, enable, chnum_en);
+}
+
+void lb_set_chnum_en(int id, bool en, bool chnum_en)
+{
+	if (chnum_en) {
+		int offset = EE_AUDIO_LB_B_CTRL0 - EE_AUDIO_LB_A_CTRL0;
+		int reg = EE_AUDIO_LB_A_CTRL0 + offset * id;
+
+		audiobus_update_bits(reg, 0x1 << 27, en << 27);
+	}
 }

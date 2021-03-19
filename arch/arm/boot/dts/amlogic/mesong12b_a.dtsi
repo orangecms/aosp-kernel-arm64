@@ -356,8 +356,9 @@
 		compatible = "amlogic, g12a-eth-dwmac","snps,dwmac";
 		reg = <0xff3f0000 0x10000
 			0xff634540 0x8
-			0xff64c000 0xa0>;
-		reg-names = "eth_base", "eth_cfg", "eth_pll";
+			0xff64c000 0xa0
+			0xffd01008 0x4>;
+		reg-names = "eth_base", "eth_cfg", "eth_pll", "eth_reset";
 		interrupts = <0 8 1>;
 		interrupt-names = "macirq";
 		status = "disabled";
@@ -1126,6 +1127,7 @@
 		ic_type = <11>;
 		vend_data: vend_data{ /* Should modified by Customer */
 			vendor_name = "Amlogic"; /* Max Chars: 8 */
+			product_desc = "MBox Meson Ref"; /* Max Chars: 16 */
 			/* standards.ieee.org/develop/regauth/oui/oui.txt */
 			vendor_id = <0x000000>;
 		};
@@ -1150,6 +1152,7 @@
 			>;
 		reg-names = "NN_REG","NN_SRAM","NN_MEM0",
 			"NN_MEM1","NN_RESET","NN_CLK";
+		nn_power_version = <2>;
 		nn_efuse = <0xff63003c 0x20>;
 	};
 
@@ -1165,6 +1168,7 @@
 		product_desc = "G12B"; /* Max Chars: 16    */
 		cec_osd_string = "AML_MBOX"; /* Max Chars: 14    */
 		port_num = <1>;
+		output = <1>;
 		ee_cec;
 		arc_port_mask = <0x2>;
 		interrupts = <0 203 1
@@ -1232,6 +1236,27 @@
 			<&clkc CLKID_VPU_CLKC_MUX>;
 		clock-names = "vpu_clkc0",
 			"vpu_clkc";
+	};
+
+	dummy_venc: dummy_venc {
+		compatible = "amlogic, dummy_venc";
+		status = "okay";
+		clocks = <&clkc CLKID_VCLK2_ENCP
+			&clkc CLKID_VCLK2_VENCP0
+			&clkc CLKID_VCLK2_VENCP1
+			&clkc CLKID_VCLK2_ENCI
+			&clkc CLKID_VCLK2_VENCI0
+			&clkc CLKID_VCLK2_VENCI1
+			&clkc CLKID_VCLK2_ENCL
+			&clkc CLKID_VCLK2_VENCL>;
+		clock-names = "encp_top_gate",
+			"encp_int_gate0",
+			"encp_int_gate1",
+			"venci_top_gate",
+			"enci_int_gate0",
+			"enci_int_gate1",
+			"encl_top_gate",
+			"encl_int_gate";
 	};
 
 	vdac {

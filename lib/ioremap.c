@@ -88,7 +88,7 @@ static inline int ioremap_pmd_range(pud_t *pud, unsigned long addr,
 		if (ioremap_pmd_enabled() &&
 		    ((next - addr) == PMD_SIZE) &&
 		    IS_ALIGNED(phys_addr + addr, PMD_SIZE) &&
-		    pmd_free_pte_page(pmd)) {
+		    pmd_free_pte_page(pmd, addr)) {
 			if (pmd_set_huge(pmd, phys_addr + addr, prot))
 				continue;
 		}
@@ -115,7 +115,7 @@ static inline int ioremap_pud_range(pgd_t *pgd, unsigned long addr,
 		if (ioremap_pud_enabled() &&
 		    ((next - addr) == PUD_SIZE) &&
 		    IS_ALIGNED(phys_addr + addr, PUD_SIZE) &&
-		    pud_free_pmd_page(pud)) {
+		    pud_free_pmd_page(pud, addr)) {
 			if (pud_set_huge(pud, phys_addr + addr, prot))
 				continue;
 		}
@@ -146,6 +146,9 @@ int ioremap_page_range(unsigned long addr,
 	unsigned long start;
 	unsigned long next;
 	int err;
+#ifdef CONFIG_AMLOGIC_DEBUG_FTRACE_PSTORE
+	phys_addr_t phys_addr_save = phys_addr;
+#endif
 
 	BUG_ON(addr >= end);
 
@@ -163,7 +166,7 @@ int ioremap_page_range(unsigned long addr,
 #ifdef CONFIG_AMLOGIC_DEBUG_FTRACE_PSTORE
 	if (need_dump_iomap() && !is_normal_memory(prot))
 		pr_err("io__map <va:0x%08lx-0x%08lx> pa:0x%lx,port:0x%lx\n",
-		       start, end, (unsigned long)phys_addr,
+		       start, end, (unsigned long)phys_addr_save,
 		       (unsigned long)pgprot_val(prot));
 #endif
 	return err;

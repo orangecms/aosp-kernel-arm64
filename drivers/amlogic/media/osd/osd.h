@@ -111,9 +111,10 @@ enum color_index_e {
 #define KEYCOLOR_FLAG_ONHOLD  2
 #define KEYCOLOR_FLAG_CURRENT 4
 
-#define HW_OSD_COUNT 4
+#define HW_OSD_COUNT     4
 #define OSD_BLEND_LAYERS 4
-#define VIU_COUNT     2
+#define VIU_COUNT        2
+#define MAX_TRACE_NUM    16
 
 /* OSD block definition */
 #define HW_OSD_BLOCK_COUNT 4
@@ -148,17 +149,24 @@ enum color_index_e {
 
 #define MALI_AFBC_SPLIT_OFF  0
 #define MALI_AFBC_SPLIT_ON   1
-#define OSD_HW_CURSOR           (1 << 0)
-#define OSD_UBOOT_LOGO          (1 << 1)
-#define OSD_ZORDER			(1 << 2)
-#define OSD_PRIMARY		(1 << 3)
-#define OSD_FREESCALE		(1 << 4)
-#define OSD_VIU2                (1 << 29)
-#define OSD_VIU1                (1 << 30)
-#define OSD_LAYER_ENABLE        (1 << 31)
+#define OSD_HW_CURSOR           BIT(0)
+#define OSD_UBOOT_LOGO          BIT(1)
+#define OSD_ZORDER              BIT(2)
+#define OSD_PRIMARY             BIT(3)
+#define OSD_FREESCALE           BIT(4)
+#define OSD_AFBC                BIT(5)
+#define OSD_VIU2                BIT(29)
+#define OSD_VIU1                BIT(30)
+#define OSD_LAYER_ENABLE        BIT(31)
 
-#define BYPASS_DIN        (1 << 7)
+#define BYPASS_DIN        BIT(7)
 #define OSD_BACKUP_COUNT 24
+
+#define LOGO_DEV_OSD0      0x0
+#define LOGO_DEV_OSD1      0x1
+#define LOGO_DEV_VIU2_OSD0 0x3
+#define LOGO_DEBUG         0x1001
+#define LOGO_LOADED        0x1002
 
 enum osd_index_e {
 	OSD1 = 0,
@@ -280,6 +288,8 @@ enum cpuid_type_e {
 	__MESON_CPU_MAJOR_ID_TL1,
 	__MESON_CPU_MAJOR_ID_SM1,
 	__MESON_CPU_MAJOR_ID_TM2,
+	__MESON_CPU_MAJOR_ID_A1,
+	__MESON_CPU_MAJOR_ID_SC2,
 	__MESON_CPU_MAJOR_ID_UNKNOWN,
 };
 
@@ -293,6 +303,7 @@ enum osd_ver_e {
 	OSD_SIMPLE = 0,
 	OSD_NORMAL,
 	OSD_HIGH_ONE,
+	OSD_NONE,
 	OSD_HIGH_OTHER
 };
 
@@ -368,6 +379,12 @@ enum render_cmd_type {
 	LAYER_SYNC,
 	BLANK_CMD,
 	PAGE_FLIP,
+};
+
+enum osd_scaler_workaroud_type {
+	SC_NORMAL = 0,
+	SC_4K2K,
+	SC_DOUBLE,
 };
 
 struct pandata_s {
@@ -470,6 +487,7 @@ struct layer_fence_map_s {
 	u32 plane_alpha;
 	u32 dim_layer;
 	u32 dim_color;
+	u32 secure_enable;
 	size_t afbc_len;
 	struct file *buf_file;
 	struct fence *in_fence;
@@ -539,6 +557,7 @@ struct hw_osd_reg_s {
 	u32 osd_dimm_ctrl;/* VIU_OSD1_DIMM_CTRL */
 	//u32 osd_blend_din_scope_h; /* VIU_OSD_BLEND_DIN0_SCOPE_H */
 	//u32 osd_blend_din_scope_v; /* VIU_OSD_BLEND_DIN0_SCOPE_V */
+	u32 osd_matrix_en_ctrl;
 
 	u32 osd_scale_coef_idx;/* VPP_OSD_SCALE_COEF_IDX */
 	u32 osd_scale_coef;/* VPP_OSD_SCALE_COEF */
@@ -581,6 +600,11 @@ struct layer_blend_reg_s {
 	u32 osd_blend_din_scope_v[OSD_BLEND_LAYERS];
 	u32 osd_blend_blend0_size;
 	u32 osd_blend_blend1_size;
+	/* pre blend */
+	u32 prebld_src3_sel;
+	u32 prebld_osd1_premult;
+	u32 prebld_src4_sel;
+	u32 prebld_osd2_premult;
 	/* post blend */
 	u32 postbld_src3_sel;
 	u32 postbld_osd1_premult;
@@ -672,6 +696,12 @@ struct hw_debug_s {
 	struct osd_debug_backup_s osd_backup[OSD_BACKUP_COUNT];
 };
 
+struct viu2_osd_reg_item {
+	u32 addr;
+	u32 val;
+	u32 mask;
+};
+
 struct hw_para_s {
 	struct pandata_s pandata[HW_OSD_COUNT];
 	struct pandata_s dispdata[HW_OSD_COUNT];
@@ -685,6 +715,7 @@ struct hw_para_s {
 	struct pandata_s cursor_dispdata[HW_OSD_COUNT];
 	struct dispdata_s src_data[HW_OSD_COUNT];
 	struct dispdata_s dst_data[HW_OSD_COUNT];
+	u32 src_crop[HW_OSD_COUNT];
 	u32 buffer_alloc[HW_OSD_COUNT];
 	u32 gbl_alpha[HW_OSD_COUNT];
 	u32 color_key[HW_OSD_COUNT];
@@ -728,6 +759,7 @@ struct hw_para_s {
 	struct hw_list_s reg[HW_REG_INDEX_MAX];
 	u32 field_out_en[VIU_COUNT];
 	u32 scale_workaround;
+	u32 sc_filter_workaround[HW_OSD_COUNT];
 	u32 fb_for_4k2k;
 	u32 antiflicker_mode;
 	u32 angle[HW_OSD_COUNT];
@@ -740,7 +772,8 @@ struct hw_para_s {
 	u32 osd_deband_enable;
 	u32 osd_fps[VIU_COUNT];
 	u32 osd_fps_start[VIU_COUNT];
-	u32 osd_display_debug;
+	u32 osd_display_debug[VIU_COUNT];
+	u32 osd_display_fb[VIU_COUNT];
 	ulong screen_base[HW_OSD_COUNT];
 	ulong screen_size[HW_OSD_COUNT];
 	ulong screen_base_backup[HW_OSD_COUNT];
@@ -764,6 +797,20 @@ struct hw_para_s {
 	u32 afbc_err_cnt;
 	u32 viu_type;
 	u32 line_n_rdma;
+	u32 osd_preblend_en; /* only for viu1 */
+	u32 fix_target_width;
+	u32 fix_target_height;
+	u32 adjust_position_x;
+	u32 adjust_position_y;
+	u32 rdma_trace_enable;
+	u32 rdma_trace_num;
+	u32 rdma_trace_reg[MAX_TRACE_NUM];
+	u32 osd_v_skip[HW_OSD_COUNT];
+	u32 secure_enable[HW_OSD_COUNT];
+	u32 secure_src;
+	u32 rdma_delayed_cnt;
+	u32 osd_reg_check;
+	u32 fb_mem_free[HW_OSD_COUNT];
 	struct hw_debug_s osd_debug;
 	int out_fence_fd[VIU_COUNT];
 	int in_fd[HW_OSD_COUNT];

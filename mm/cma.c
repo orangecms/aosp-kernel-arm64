@@ -39,6 +39,7 @@
 #ifdef CONFIG_AMLOGIC_CMA
 #include <asm/pgtable.h>
 #include <linux/amlogic/aml_cma.h>
+#include <linux/delay.h>
 #include <linux/amlogic/secmon.h>
 #endif /* CONFIG_AMLOGIC_CMA */
 
@@ -120,6 +121,21 @@ int setup_cma_full_pagemap(struct cma *cma)
 #endif
 }
 
+static struct cma *find_cma(struct page *page)
+{
+	unsigned long pfn;
+	struct cma *cma;
+	int i;
+
+	pfn = page_to_pfn(page);
+	for (i = 0; i < cma_area_count; i++) {
+		cma = &cma_areas[i];
+		if (cma->base_pfn <= pfn && pfn < cma->base_pfn + cma->count)
+			return cma;
+	}
+	return NULL;
+}
+
 int cma_mmu_op(struct page *page, int count, bool set)
 {
 	pgd_t *pgd;
@@ -128,9 +144,17 @@ int cma_mmu_op(struct page *page, int count, bool set)
 	pte_t *pte;
 	unsigned long addr, end;
 	struct mm_struct *mm;
+	struct cma *cma;
 
 	if (!page || PageHighMem(page))
 		return -EINVAL;
+
+	cma  = find_cma(page);
+	if (!cma || !cma->clear_map) {
+		pr_debug("%s, page:%lx is not cma or no clear-map, cma:%px\n",
+			 __func__, page_to_pfn(page), cma);
+		return -EINVAL;
+	}
 
 	addr = (unsigned long)page_address(page);
 	end  = addr + count * PAGE_SIZE;
@@ -482,12 +506,14 @@ int __init cma_declare_contiguous(phys_addr_t base,
 
 	ret = cma_init_reserved_mem(base, size, order_per_bit, res_cma);
 	if (ret)
-		goto err;
+		goto free_mem;
 
 	pr_info("Reserved %ld MiB at %pa\n", (unsigned long)size / SZ_1M,
 		&base);
 	return 0;
 
+free_mem:
+	memblock_free(base, size);
 err:
 	pr_err("Failed to reserve %ld MiB\n", (unsigned long)size / SZ_1M);
 	return ret;
@@ -513,6 +539,9 @@ struct page *cma_alloc(struct cma *cma, size_t count, unsigned int align)
 #ifdef CONFIG_AMLOGIC_CMA
 	int dummy;
 	unsigned long long tick;
+	unsigned long long in_tick, timeout;
+
+	in_tick = sched_clock();
 #endif /* CONFIG_AMLOGIC_CMA */
 
 	if (!cma || !cma->count)
@@ -525,6 +554,8 @@ struct page *cma_alloc(struct cma *cma, size_t count, unsigned int align)
 	tick = sched_clock();
 	cma_debug(0, NULL, "(cma %p, count %zu, align %d)\n",
 		  (void *)cma, count, align);
+	in_tick = sched_clock();
+	timeout = 2ULL * 1000000 * (1 + ((count * PAGE_SIZE) >> 20));
 #endif
 	if (!count)
 		return NULL;
@@ -580,6 +611,13 @@ struct page *cma_alloc(struct cma *cma, size_t count, unsigned int align)
 	#ifndef CONFIG_AMLOGIC_CMA
 		/* try again with a bit different memory target */
 		start = bitmap_no + mask + 1;
+	#else
+		/*
+		 * CMA allocation time out, may blocked on some pages
+		 * relax CPU and try later
+		 */
+		if ((sched_clock() - in_tick) >= timeout)
+			usleep_range(1000, 2000);
 	#endif /* CONFIG_AMLOGIC_CMA */
 	}
 

@@ -345,7 +345,7 @@
 		reg = <0xc9410000 0x10000
 			0xc8834540 0x8
 			0xc8834558 0xc
-			0xc1104484 0x4>;
+			0xc1104408 0x4>;
 		interrupts = <0 8 1
 						  0 9 1>;
 		phy-mode= "rmii";
@@ -592,6 +592,7 @@
 			aoclkc: clock-controller@0 {
 				compatible = "amlogic,txl-aoclkc";
 				#clock-cells = <1>;
+				#reset-cells = <1>;
 				reg = <0x0 0x1000>;
 			};
 
@@ -1065,6 +1066,7 @@
 		status = "okay";
 		reg = <0xc8838000 0x100
 		       0xc8837000 0x100>;
+		sec_base = <0xda838400>;
 		interrupts = <0 52 1>;
 		interrupt-names = "ddr_bandwidth";
 	};

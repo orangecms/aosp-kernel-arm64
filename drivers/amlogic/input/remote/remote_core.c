@@ -38,6 +38,7 @@
 #include <linux/amlogic/cpu_version.h>
 #include <linux/of_address.h>
 #include "remote_core.h"
+#include "remote_meson.h"
 
 /**
  *global variable for debug
@@ -65,6 +66,8 @@ static void ir_do_keyup(struct remote_dev *dev)
 {
 	input_report_key(dev->input_device, dev->last_keycode, 0);
 	input_sync(dev->input_device);
+	if (dev->last_keycode == KEY_POWER)
+		pm_relax(dev->dev);
 	dev->keypressed = false;
 	dev->last_scancode = -1;
 	remote_dbg(dev->dev, "keyup!!\n");
@@ -97,9 +100,6 @@ static void ir_do_keydown(struct remote_dev *dev, int scancode,
 {
 	remote_dbg(dev->dev, "keypressed=0x%x\n", dev->keypressed);
 
-	if (dev->keypressed)
-		ir_do_keyup(dev);
-
 	if (keycode != KEY_RESERVED) {
 		dev->keypressed = true;
 		dev->last_scancode = scancode;
@@ -115,7 +115,11 @@ static void ir_do_keydown(struct remote_dev *dev, int scancode,
 void remote_keydown(struct remote_dev *dev, int scancode, int status)
 {
 	unsigned long flags;
+	u8 protocol_delay;
 	u32 keycode;
+	struct remote_chip *chip = (struct remote_chip *)dev->platform_data;
+
+	protocol_delay = chip->ir_contr[chip->ir_work].protocol_delay;
 
 	if (dev->led_blink)
 		led_trigger_blink_oneshot(dev->led_feedback, &dev->delay_on,
@@ -143,16 +147,29 @@ void remote_keydown(struct remote_dev *dev, int scancode, int status)
 	}
 
 	if (status == REMOTE_NORMAL) {
+		/* drop down frame before up timer expire to avoid UI lag */
+		if (dev->keypressed) {
+			ir_do_keyup(dev);
+			spin_unlock_irqrestore(&dev->keylock, flags);
+			return;
+		}
+
 		keycode = dev->getkeycode(dev, scancode);
 		if (keycode == KEY_POWER)
-			pm_wakeup_event(dev->dev, 2000);
+			pm_stay_awake(dev->dev);
 		ir_do_keydown(dev, scancode, keycode);
 	}
 
 	if (dev->keypressed) {
 		dev->wait_next_repeat = 0;
-		dev->keyup_jiffies = jiffies +
-			msecs_to_jiffies(dev->keyup_delay);
+		/* used for NEC like protocol with data-->repeat */
+		if (protocol_delay && (status != REMOTE_NORMAL)) {
+			dev->keyup_jiffies = jiffies +
+				msecs_to_jiffies(protocol_delay);
+		} else {
+			dev->keyup_jiffies = jiffies +
+					msecs_to_jiffies(dev->keyup_delay);
+		}
 		mod_timer(&dev->timer_keyup, dev->keyup_jiffies);
 	}
 	spin_unlock_irqrestore(&dev->keylock, flags);

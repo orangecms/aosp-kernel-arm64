@@ -19,28 +19,41 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/string.h>
-/*#include <linux/delay.h>*/
+#include <linux/spinlock.h>
 
 #include "pdm_hw.h"
 #include "regs.h"
 #include "iomap.h"
-#include "pdm_hw_coeff.c"
+#include "pdm_hw_coeff.h"
+#include "pdm.h"
 
+static DEFINE_SPINLOCK(pdm_lock);
+static unsigned long pdm_enable_cnt;
 void pdm_enable(int is_enable)
 {
-	if (is_enable) {
-		aml_pdm_update_bits(
-			PDM_CTRL,
-			0x1 << 31,
-			is_enable << 31);
-	} else {
-		aml_pdm_update_bits(
-			PDM_CTRL,
-			0x1 << 31 | 0x1 << 16,
-			0 << 31 | 0 << 16);
+	unsigned long flags;
 
-		/*udelay(1000);*/
+	spin_lock_irqsave(&pdm_lock, flags);
+	if (is_enable) {
+		/* en chnum sync default */
+		if (pdm_enable_cnt == 0)
+			aml_pdm_update_bits(
+				PDM_CTRL,
+				0x1 << 31 | 1 << 17,
+				is_enable << 31 | 1 << 17);
+		pdm_enable_cnt++;
+	} else {
+		if (WARN_ON(pdm_enable_cnt == 0))
+			goto exit;
+		if (--pdm_enable_cnt == 0)
+			aml_pdm_update_bits(
+				PDM_CTRL,
+				0x1 << 31 | 0x1 << 16,
+				0 << 31 | 0 << 16);
 	}
+
+exit:
+	spin_unlock_irqrestore(&pdm_lock, flags);
 }
 
 void pdm_fifo_reset(void)
@@ -66,15 +79,24 @@ void pdm_force_sysclk_to_oscin(bool force)
 
 void pdm_set_channel_ctrl(int sample_count)
 {
-	aml_pdm_write(PDM_CHAN_CTRL, ((sample_count << 24) |
-					(sample_count << 16) |
-					(sample_count << 8) |
-					(sample_count << 0)
+	int left_sample_count = sample_count, right_sample_count = sample_count;
+	int train_version = pdm_get_train_version();
+
+	/* only for sc2, left and right sample count are different */
+	/* sysclk / dclk / 2 */
+	/* 133 / 3.072 / 2 = 22 */
+	if (train_version == PDM_TRAIN_VERSION_V2)
+		right_sample_count += 22;
+
+	aml_pdm_write(PDM_CHAN_CTRL, ((right_sample_count << 24) |
+					(left_sample_count << 16) |
+					(right_sample_count << 8) |
+					(left_sample_count << 0)
 		));
-	aml_pdm_write(PDM_CHAN_CTRL1, ((sample_count << 24) |
-					(sample_count << 16) |
-					(sample_count << 8) |
-					(sample_count << 0)
+	aml_pdm_write(PDM_CHAN_CTRL1, ((right_sample_count << 24) |
+					(left_sample_count << 16) |
+					(right_sample_count << 8) |
+					(left_sample_count << 0)
 		));
 }
 
@@ -466,14 +488,9 @@ int pdm_get_mute_channel(void)
 
 void pdm_set_mute_channel(int mute_chmask)
 {
-	int mute_en = 0;
-
-	if (mute_chmask)
-		mute_en = 1;
-
 	aml_pdm_update_bits(PDM_CTRL,
-		(0xff << 20 | 0x1 << 17),
-		(mute_chmask << 20 | mute_en << 17));
+		0xff << 20,
+		mute_chmask << 20);
 }
 
 void pdm_set_bypass_data(bool bypass)
@@ -526,18 +543,21 @@ int pdm_dclkidx2rate(int idx)
 	return rate;
 }
 
-int pdm_get_sample_count(int isLowPower, int dclk_idx)
+int pdm_get_sample_count(int islowpower, int dclk_idx)
 {
 	int count = 0;
 
-	if (isLowPower)
+	if (islowpower) {
 		count = 0;
-	else if (dclk_idx == 1)
+	} else if (dclk_idx == 1) {
 		count = 38;
-	else if (dclk_idx  == 2)
+	} else if (dclk_idx  == 2) {
 		count = 48;
-	else
-		count = 18;
+	} else {
+		count = pdm_get_train_sample_count_from_dts();
+		if (count < 0)
+			count = 18;
+	}
 
 	return count;
 }

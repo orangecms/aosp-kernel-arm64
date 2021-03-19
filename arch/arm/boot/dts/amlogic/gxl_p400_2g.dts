@@ -49,9 +49,10 @@
 		ramoops@0x07400000 {
 			compatible = "ramoops";
 			reg = <0x07400000 0x00100000>;
-			record-size = <0x8000>;
-			console-size = <0x8000>;
-			ftrace-size = <0x20000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x80000>;
+			pmsg-size = <0x20000>;
 		};
 
 		secmon_reserved:linux,secmon {
@@ -67,13 +68,20 @@
 			reg = <0x05300000 0x2000000>;
 			no-map;
 		};
-		fb_reserved:linux,meson-fb {
+		logo_reserved:linux,meson-fb {
 			compatible = "shared-dma-pool";
 			reusable;
-			size = <0x2400000>;
+			size = <0x800000>;
 			alignment = <0x400000>;
-			alloc-ranges = <0x7dc00000 0x2400000>;
+			alloc-ranges = <0x7f800000 0x800000>;
 		};
+	};
+
+	cma_shrinker {
+		compatible = "amlogic, cma-shrinker";
+		status = "okay";
+		adj  = <0 100 200 250 900 950>;
+		free = <8192 12288 16384 24576 28672 32768>;
 	};
 
 	wifi{
@@ -256,7 +264,8 @@
 			compatible = "amlogic, gxbb-eth-dwmac";
 			reg = <0xc9410000 0x10000
 			0xc8834540 0x8
-			0xc8834558 0xc>;
+			0xc8834558 0xc
+			0xc1104408 0x4>;
 			interrupts = <0 8 1>;
 			pinctrl-names = "external_eth_pins";
 			pinctrl-0 = <&external_eth_pins>;
@@ -470,7 +479,7 @@
 
 	meson-fb {
 		compatible = "amlogic, meson-gxl";
-		memory-region = <&fb_reserved>;
+		memory-region = <&logo_reserved>;
 		dev_name = "meson-fb";
 		status = "okay";
 		interrupts = <0 3 1
@@ -484,7 +493,7 @@
 		display_size_default = <1920 1080 1920 3240 32>;
 		/*1920*1080*4*3 = 0x17BB000*/
 		mem_alloc = <1>;
-		logo_addr = "0x7dc00000";
+		logo_addr = "0x7f800000";
 	};
 
 	ge2d {

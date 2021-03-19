@@ -311,6 +311,7 @@ struct xhci_op_regs {
  */
 #define PORT_PLS_MASK	(0xf << 5)
 #define XDEV_U0		(0x0 << 5)
+#define XDEV_U1		(0x1 << 5)
 #define XDEV_U2		(0x2 << 5)
 #define XDEV_U3		(0x3 << 5)
 #define XDEV_INACTIVE	(0x6 << 5)
@@ -385,6 +386,10 @@ struct xhci_op_regs {
 #define PORT_PLC	(1 << 22)
 /* port configure error change - port failed to configure its link partner */
 #define PORT_CEC	(1 << 23)
+#define PORT_CHANGE_MASK	(PORT_CSC | PORT_PEC | PORT_WRC | PORT_OCC | \
+				 PORT_RC | PORT_PLC | PORT_CEC)
+
+
 /* Cold Attach Status - xHC can set this bit to report device attached during
  * Sx state. Warm port reset should be perfomed to clear this bit and move port
  * to connected state.
@@ -917,7 +922,11 @@ struct xhci_virt_ep {
 	unsigned int			ep_state;
 #define SET_DEQ_PENDING		(1 << 0)
 #define EP_HALTED		(1 << 1)	/* For stall handling */
-#define EP_HALT_PENDING		(1 << 2)	/* For URB cancellation */
+#ifdef CONFIG_AMLOGIC_USB
+#define EP_STOP_CMD_PENDING	(1 << 2)	/* For URB cancellation */
+#else
+#define EP_HALT_PENDING	(1 << 2)        /* For URB cancellation */
+#endif
 /* Transitioning the endpoint to using streams, don't enqueue URBs */
 #define EP_GETTING_STREAMS	(1 << 3)
 #define EP_HAS_STREAMS		(1 << 4)
@@ -929,7 +938,9 @@ struct xhci_virt_ep {
 	unsigned int		stopped_stream;
 	/* Watchdog timer for stop endpoint command to cancel URBs */
 	struct timer_list	stop_cmd_timer;
-	int			stop_cmds_pending;
+#ifndef CONFIG_AMLOGIC_USB
+	int                     stop_cmds_pending;
+#endif
 	struct xhci_hcd		*xhci;
 	/* Dequeue pointer and dequeue segment for a submitted Set TR Dequeue
 	 * command.  We'll need to update the ring's dequeue segment and dequeue
@@ -1508,7 +1519,7 @@ struct xhci_bus_state {
  * It can take up to 20 ms to transition from RExit to U0 on the
  * Intel Lynx Point LP xHCI host.
  */
-#define	XHCI_MAX_REXIT_TIMEOUT	(20 * 1000)
+#define	XHCI_MAX_REXIT_TIMEOUT_MS	20
 
 static inline unsigned int hcd_index(struct usb_hcd *hcd)
 {

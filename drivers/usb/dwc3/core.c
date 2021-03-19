@@ -778,6 +778,7 @@ static int dwc3_core_init(struct dwc3 *dwc)
 #ifdef CONFIG_AMLOGIC_USB
 	reg = dwc3_readl(dwc->regs, DWC3_GUCTL1);
 	reg |= DWC3_GUCTL_NAKPERENHHS;
+	reg |= DWC3_GUCTL_PARKMODEDISABLESS;
 	dwc3_writel(dwc->regs, DWC3_GUCTL1, reg);
 
 	reg = dwc3_readl(dwc->regs, DWC3_GUCTL);
@@ -1129,7 +1130,7 @@ static int dwc3_probe(struct platform_device *pdev)
 	dwc->regs_size	= resource_size(res);
 
 	/* default to highest possible threshold */
-	lpm_nyet_threshold = 0xff;
+	lpm_nyet_threshold = 0xf;
 
 	/* default to -3.5dB de-emphasis */
 	tx_de_emphasis = 1;
@@ -1283,6 +1284,7 @@ static int dwc3_probe(struct platform_device *pdev)
 
 err5:
 	dwc3_event_buffers_cleanup(dwc);
+	dwc3_ulpi_exit(dwc);
 
 err4:
 	dwc3_free_scratch_buffers(dwc);
@@ -1312,11 +1314,30 @@ err0:
 #ifdef CONFIG_AMLOGIC_USB
 void dwc3_shutdown(struct platform_device *pdev)
 {
-	struct dwc3 *dwc = platform_get_drvdata(pdev);
+	struct dwc3	*dwc = platform_get_drvdata(pdev);
+	struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 
-	dev_dbg(dwc->dev, "%s\n", __func__);
-	usb_phy_shutdown(dwc->usb2_phy);
-	usb_phy_shutdown(dwc->usb3_phy);
+	pm_runtime_get_sync(&pdev->dev);
+	/*
+	 * restore res->start back to its original value so that, in case the
+	 * probe is deferred, we don't end up getting error in request the
+	 * memory region the next time probe is called.
+	 */
+	res->start -= DWC3_GLOBALS_REGS_START;
+
+	dwc3_debugfs_exit(dwc);
+	dwc3_core_exit_mode(dwc);
+
+	dwc3_core_exit(dwc);
+	dwc3_ulpi_exit(dwc);
+
+	pm_runtime_put_sync(&pdev->dev);
+	pm_runtime_allow(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
+
+	dwc3_free_event_buffers(dwc);
+	dwc3_free_scratch_buffers(dwc);
+
 }
 #endif
 

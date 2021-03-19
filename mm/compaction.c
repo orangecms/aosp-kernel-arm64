@@ -20,7 +20,11 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/page_owner.h>
+#include <linux/psi.h>
 #include "internal.h"
+#ifdef CONFIG_AMLOGIC_PAGE_TRACE
+#include <linux/amlogic/page_trace.h>
+#endif
 
 #ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
@@ -972,6 +976,10 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 
 isolate_success:
 		list_add(&page->lru, &cc->migratepages);
+	#ifdef CONFIG_AMLOGIC_CMA
+		if (cc->page_type == COMPACT_CMA)
+			SetPageCmaAllocating(page);
+	#endif
 		cc->nr_migratepages++;
 		nr_isolated++;
 
@@ -1251,6 +1259,51 @@ static void isolate_freepages(struct compact_control *cc)
 	cc->free_pfn = isolate_start_pfn;
 }
 
+#ifdef CONFIG_AMLOGIC_CMA
+static int can_migrate_to_cma(struct page *page)
+{
+	struct address_space *mapping;
+
+	mapping = page_mapping(page);
+	if ((unsigned long)mapping & PAGE_MAPPING_ANON)
+		mapping = NULL;
+
+	if (PageKsm(page) && !PageSlab(page))
+		return 0;
+
+	if (mapping && cma_forbidden_mask(mapping_gfp_mask(mapping)))
+		return 0;
+
+	return 1;
+}
+
+static struct page *get_compact_page(struct page *migratepage,
+				     struct compact_control *cc)
+{
+	int can_to_cma, find = 0;
+	struct page *page, *next;
+
+	can_to_cma = can_migrate_to_cma(migratepage);
+	if (!can_to_cma) {
+		list_for_each_entry_safe(page, next, &cc->freepages, lru) {
+			if (!cma_page(page)) {
+				list_del(&page->lru);
+				cc->nr_freepages--;
+				find = 1;
+				break;
+			}
+		}
+		if (!find)
+			return NULL;
+	} else {
+		page = list_entry(cc->freepages.next, struct page, lru);
+		list_del(&page->lru);
+		cc->nr_freepages--;
+	}
+	return page;
+}
+#endif
+
 /*
  * This is a migrate-callback that "allocates" freepages by taking pages
  * from the isolated freelists in the block we are migrating to.
@@ -1261,6 +1314,9 @@ static struct page *compaction_alloc(struct page *migratepage,
 {
 	struct compact_control *cc = (struct compact_control *)data;
 	struct page *freepage;
+#ifdef CONFIG_AMLOGIC_PAGE_TRACE
+	struct page_trace *old_trace, *new_trace;
+#endif
 
 	/*
 	 * Isolate free pages if necessary, and if we are not aborting due to
@@ -1274,9 +1330,20 @@ static struct page *compaction_alloc(struct page *migratepage,
 			return NULL;
 	}
 
+#ifdef CONFIG_AMLOGIC_CMA
+	freepage = get_compact_page(migratepage, cc);
+#else
 	freepage = list_entry(cc->freepages.next, struct page, lru);
 	list_del(&freepage->lru);
 	cc->nr_freepages--;
+#endif
+#ifdef CONFIG_AMLOGIC_PAGE_TRACE
+	if (freepage) {
+		old_trace = find_page_base(migratepage);
+		new_trace = find_page_base(freepage);
+		*new_trace = *old_trace;
+	}
+#endif
 
 	return freepage;
 }
@@ -2109,11 +2176,15 @@ static int kcompactd(void *p)
 	pgdat->kcompactd_classzone_idx = pgdat->nr_zones - 1;
 
 	while (!kthread_should_stop()) {
+		unsigned long pflags;
+
 		trace_mm_compaction_kcompactd_sleep(pgdat->node_id);
 		wait_event_freezable(pgdat->kcompactd_wait,
 				kcompactd_work_requested(pgdat));
 
+		psi_memstall_enter(&pflags);
 		kcompactd_do_work(pgdat);
+		psi_memstall_leave(&pflags);
 	}
 
 	return 0;

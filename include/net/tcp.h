@@ -140,6 +140,8 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 						 * most likely due to retrans in 3WHS.
 						 */
 
+#define TCP_DELACK_SEG 1 /*Number of full MSS to receive before Acking RFC2581*/
+
 #define TCP_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U)) /* Maximal interval between probes
 					                 * for local resources.
 					                 */
@@ -266,6 +268,11 @@ extern int sysctl_tcp_early_retrans;
 extern int sysctl_tcp_limit_output_bytes;
 extern int sysctl_tcp_challenge_ack_limit;
 extern int sysctl_tcp_min_tso_segs;
+
+/* sysctl variables for controlling various tcp parameters */
+extern int sysctl_tcp_delack_seg;
+extern int sysctl_tcp_use_userconfig;
+
 extern int sysctl_tcp_min_rtt_wlen;
 extern int sysctl_tcp_autocorking;
 extern int sysctl_tcp_invalid_ratelimit;
@@ -363,6 +370,12 @@ void tcp_twsk_destructor(struct sock *sk);
 ssize_t tcp_splice_read(struct socket *sk, loff_t *ppos,
 			struct pipe_inode_info *pipe, size_t len,
 			unsigned int flags);
+
+void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks);
+extern int tcp_use_userconfig_sysctl_handler(struct ctl_table *table, int write,
+	void __user *buffer, size_t *length, loff_t *ppos);
+extern int tcp_proc_delayed_ack_control(struct ctl_table *table, int write,
+	void __user *buffer, size_t *length, loff_t *ppos);
 
 static inline void tcp_dec_quickack_mode(struct sock *sk,
 					 const unsigned int pkts)
@@ -554,6 +567,7 @@ void tcp_send_fin(struct sock *sk);
 void tcp_send_active_reset(struct sock *sk, gfp_t priority);
 int tcp_send_synack(struct sock *);
 void tcp_push_one(struct sock *, unsigned int mss_now);
+void __tcp_send_ack(struct sock *sk, u32 rcv_nxt);
 void tcp_send_ack(struct sock *sk);
 void tcp_send_delayed_ack(struct sock *sk);
 void tcp_send_loss_probe(struct sock *sk);
@@ -849,8 +863,6 @@ enum tcp_ca_event {
 	CA_EVENT_LOSS,		/* loss timeout */
 	CA_EVENT_ECN_NO_CE,	/* ECT set, but not CE marked */
 	CA_EVENT_ECN_IS_CE,	/* received CE marked IP packet */
-	CA_EVENT_DELAYED_ACK,	/* Delayed ack is sent */
-	CA_EVENT_NON_DELAYED_ACK,
 };
 
 /* Information about inbound ACK, passed to cong_ops->in_ack_event() */
@@ -1514,6 +1526,11 @@ bool tcp_fastopen_cookie_check(struct sock *sk, u16 *mss,
 bool tcp_fastopen_defer_connect(struct sock *sk, int *err);
 #define TCP_FASTOPEN_KEY_LENGTH 16
 
+static inline void tcp_init_send_head(struct sock *sk)
+{
+	sk->sk_send_head = NULL;
+}
+
 /* Fastopen key context */
 struct tcp_fastopen_context {
 	struct crypto_cipher	*tfm;
@@ -1530,6 +1547,8 @@ static inline void tcp_write_queue_purge(struct sock *sk)
 		sk_wmem_free_skb(sk, skb);
 	sk_mem_reclaim(sk);
 	tcp_clear_all_retrans_hints(tcp_sk(sk));
+	tcp_init_send_head(sk);
+	inet_csk(sk)->icsk_backoff = 0;
 }
 
 static inline struct sk_buff *tcp_write_queue_head(const struct sock *sk)
@@ -1588,11 +1607,6 @@ static inline void tcp_check_send_head(struct sock *sk, struct sk_buff *skb_unli
 		sk->sk_send_head = NULL;
 	if (tcp_sk(sk)->highest_sack == skb_unlinked)
 		tcp_sk(sk)->highest_sack = NULL;
-}
-
-static inline void tcp_init_send_head(struct sock *sk)
-{
-	sk->sk_send_head = NULL;
 }
 
 static inline void __tcp_add_write_queue_tail(struct sock *sk, struct sk_buff *skb)

@@ -31,6 +31,9 @@
 #define MEMIF_INT_FIFO_DEPTH        BIT(5)
 #define MEMIF_INT_MASK              GENMASK(7, 0)
 
+#define TODDR_FIFO_CNT                    GENMASK(19, 8)
+#define FRDDR_FIFO_CNT                    GENMASK(17, 8)
+
 enum ddr_num {
 	DDR_A,
 	DDR_B,
@@ -90,6 +93,8 @@ enum frddr_dest {
 	TDMOUT_C,
 	SPDIFOUT_A,
 	SPDIFOUT_B,
+	EARCTX_DMAC,
+	FRDDR_MAX
 };
 
 enum status_sel {
@@ -154,6 +159,10 @@ struct ddr_chipinfo {
 	 * 2: vad
 	 */
 	int wakeup;
+
+	bool chnum_sync;
+
+	bool burst_finished_flag;
 };
 
 struct toddr {
@@ -172,8 +181,6 @@ struct toddr {
 
 	enum toddr_src src;
 	unsigned int fifo_id;
-
-	enum resample_src asrc_src_sel;
 
 	int is_lb; /* check whether for loopback */
 	int irq;
@@ -196,6 +203,7 @@ struct toddr_attach {
 	 * check which toddr in use should be attached
 	 */
 	enum toddr_src attach_module;
+	int resample_version;
 };
 
 struct frddr_attach {
@@ -230,12 +238,20 @@ struct frddr {
 	bool reserved;
 };
 
+struct ddr_info {
+	unsigned int toddr_addr;
+	unsigned int frddr_addr;
+	char *toddr_name;
+	char *frddr_name;
+};
+
 /* to ddrs */
 struct toddr *fetch_toddr_by_src(int toddr_src);
 struct toddr *aml_audio_register_toddr(struct device *dev,
 		struct aml_audio_controller *actrl,
 		irq_handler_t handler, void *data);
 int aml_audio_unregister_toddr(struct device *dev, void *data);
+void audio_toddr_irq_enable(struct toddr *to, bool en);
 int aml_toddr_set_buf(struct toddr *to, unsigned int start,
 			unsigned int end);
 int aml_toddr_set_buf_startaddr(struct toddr *to, unsigned int start);
@@ -252,6 +268,7 @@ void aml_toddr_force_finish(struct toddr *to);
 void aml_toddr_set_format(struct toddr *to, struct toddr_fmt *fmt);
 
 unsigned int aml_toddr_get_status(struct toddr *to);
+unsigned int aml_toddr_get_fifo_cnt(struct toddr *to);
 void aml_toddr_ack_irq(struct toddr *to, int status);
 
 void aml_toddr_insert_chanum(struct toddr *to);
@@ -260,6 +277,7 @@ void aml_toddr_write(struct toddr *to, unsigned int val);
 unsigned int aml_toddr_read1(struct toddr *to);
 void aml_toddr_write1(struct toddr *to, unsigned int val);
 unsigned int aml_toddr_read_status2(struct toddr *to);
+bool aml_toddr_burst_finished(struct toddr *to);
 
 /* resample */
 void aml_set_resample(enum resample_idx id,
@@ -294,6 +312,8 @@ void aml_frddr_set_format(struct frddr *fr,
 	unsigned int chnum,
 	unsigned int msb,
 	unsigned int frddr_type);
+
+unsigned int aml_frddr_get_fifo_cnt(struct frddr *fr);
 
 void aml_frddr_reset(struct frddr *fr, int offset);
 

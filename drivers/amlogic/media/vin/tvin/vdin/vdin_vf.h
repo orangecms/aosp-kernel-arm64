@@ -34,12 +34,11 @@
 /* only log backend opertations */
 #define VF_LOG_BE
 
-#define VDIN_DV_MAX_NUM		        9
-
-#define VF_FLAG_NORMAL_FRAME		 0x00000001
-#define VF_FLAG_FREEZED_FRAME		 0x00000002
-#define VFRAME_DISP_MAX_NUM 20
-#define VDIN_VF_POOL_FREEZE              0x00000001
+#define VF_FLAG_NORMAL_FRAME	0x00000001
+#define VF_FLAG_FREEZED_FRAME	0x00000002
+#define VFRAME_DISP_MAX_NUM	20
+#define VDIN_CANVAS_MAX_CNT	10
+#define VDIN_VF_POOL_FREEZE	0x00000001
 #define ISR_LOG_EN
 
 #define VF_LOG_PRINT_MAX_LEN 100
@@ -128,6 +127,7 @@ struct vf_pool {
 	spinlock_t fz_lock;
 	unsigned int tmp_list_size;
 	struct list_head tmp_list;
+	struct tvin_dv_vsif_s dv_vsif;/*dolby vsi info*/
 	spinlock_t tmp_lock;
 	spinlock_t log_lock;
 	spinlock_t dv_lock;/*dolby vision lock*/
@@ -138,11 +138,12 @@ struct vf_pool {
 	struct isr_log_s isr_log;
 #endif
 	atomic_t buffer_cnt;
-	unsigned int dv_buf_mem[VDIN_DV_MAX_NUM];
-	void *dv_buf_vmem[VDIN_DV_MAX_NUM];
-	unsigned int dv_buf_size[VDIN_DV_MAX_NUM];
-	char *dv_buf[VDIN_DV_MAX_NUM];
-	char *dv_buf_ori[VDIN_DV_MAX_NUM];
+	unsigned int low_latency;
+	unsigned int dv_buf_mem[VDIN_CANVAS_MAX_CNT];
+	void *dv_buf_vmem[VDIN_CANVAS_MAX_CNT];
+	unsigned int dv_buf_size[VDIN_CANVAS_MAX_CNT];
+	char *dv_buf[VDIN_CANVAS_MAX_CNT];
+	char *dv_buf_ori[VDIN_CANVAS_MAX_CNT];
 	unsigned int disp_index[VFRAME_DISP_MAX_NUM];
 	unsigned int skip_vf_num;/*skip pre vframe num*/
 	enum vframe_disp_mode_e	disp_mode[VFRAME_DISP_MAX_NUM];

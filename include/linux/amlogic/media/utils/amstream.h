@@ -94,6 +94,12 @@
 #define AMSTREAM_IOC_CLEAR_VIDEOPIP _IOW((_A_M), 0x24, int)
 #define AMSTREAM_IOC_CLEAR_PIP_VBUF _IO((_A_M), 0x25)
 
+#define AMSTREAM_IOC_GET_DISPLAYPATH  _IOW((_A_M), 0x26, int)
+#define AMSTREAM_IOC_SET_DISPLAYPATH  _IOW((_A_M), 0x27, int)
+
+#define AMSTREAM_IOC_GET_PIP_DISPLAYPATH  _IOW((_A_M), 0x28, int)
+#define AMSTREAM_IOC_SET_PIP_DISPLAYPATH  _IOW((_A_M), 0x29, int)
+
 #define AMSTREAM_IOC_GLOBAL_GET_VIDEOPIP_OUTPUT  _IOR((_A_M), 0x2b, int)
 #define AMSTREAM_IOC_GLOBAL_SET_VIDEOPIP_OUTPUT  _IOW((_A_M), 0x2c, int)
 #define AMSTREAM_IOC_GET_VIDEOPIP_DISABLE  _IOR((_A_M), 0x2d, int)
@@ -205,6 +211,7 @@
 #define AMSTREAM_IOC_GET_OMX_VERSION _IOW((_A_M), 0xb1, int)
 #define AMSTREAM_IOC_GET_OMX_INFO    _IOR((_A_M), 0xb2, unsigned int)
 #define AMSTREAM_IOC_SET_HDR_INFO    _IOW((_A_M), 0xb3, int)
+#define AMSTREAM_IOC_SET_TUNNEL_MODE _IOR(_A_M, 0xbd, unsigned int)
 #define AMSTREAM_IOC_GET_FIRST_FRAME_TOGGLED _IOR(_A_M, 0xbe, unsigned int)
 #define AMSTREAM_IOC_SET_VIDEOPEEK   _IOW(_A_M, 0xbf, unsigned int)
 
@@ -223,10 +230,17 @@
 #define AMSTREAM_IOC_SET_PTR _IOW((_A_M), 0xc6, struct am_ioctl_parm_ptr)
 #define AMSTREAM_IOC_GET_AVINFO _IOR((_A_M), 0xc7, struct av_param_info_t)
 #define AMSTREAM_IOC_GET_QOSINFO _IOR((_A_M), 0xc8, struct av_param_qosinfo_t)
-
+#define AMSTREAM_IOC_SET_CRC _IOW((_A_M), 0xc9, struct usr_crc_info_t)
+#define AMSTREAM_IOC_GET_CRC_CMP_RESULT _IOWR((_A_M), 0xca, int)
+#define AMSTREAM_IOC_GET_MVDECINFO _IOR((_A_M), 0xcb, int)
+/* amstream support external stbuf */
+#define AMSTREAM_IOC_INIT_EX_STBUF    _IOW((_A_M), 0xcc, struct stream_buffer_metainfo)
+#define AMSTREAM_IOC_WR_STBUF_META  _IOW((_A_M), 0xcd, struct stream_buffer_metainfo)
+#define AMSTREAM_IOC_GET_STBUF_STATUS _IOR((_A_M), 0xce, struct stream_buffer_status)
 
 #define TRICKMODE_NONE       0x00
 #define TRICKMODE_I          0x01
+#define TRICKMODE_I_HEVC     0x07
 #define TRICKMODE_FFFB       0x02
 
 #define TRICK_STAT_DONE     0x01
@@ -268,6 +282,11 @@ enum FRAME_BASE_VIDEO_PATH {
 	FRAME_BASE_PATH_V4L_VIDEO,
 	FRAME_BASE_PATH_TUNNEL_MODE,
 	FRAME_BASE_PATH_V4L_OSD,
+	FRAME_BASE_PATH_DI_V4LVIDEO,
+	FRAME_BASE_PATH_PIP_TUNNEL_MODE,
+	FRAME_BASE_PATH_V4LVIDEO,
+	FRAME_BASE_PATH_DTV_TUNNEL_MODE,
+	FRAME_BASE_PATH_AMLVIDEO_FENCE,
 	FRAME_BASE_PATH_MAX
 };
 
@@ -303,6 +322,9 @@ struct buf_status {
 #define DECODER_FATAL_ERROR_NO_MEM		(0x400<<16)
 
 #define DECODER_ERROR_MASK	(0xffff<<16)
+/* The total slot number for fifo_buf */
+#define NUM_FRAME_VDEC  128  //This must be 2^n
+#define QOS_FRAME_NUM 8
 
 
 enum E_ASPECT_RATIO {
@@ -322,23 +344,45 @@ struct vdec_status {
 
 struct vdec_info {
 	char vdec_name[16];
-	unsigned int ver;
-	unsigned int frame_width;
-	unsigned int frame_height;
-	unsigned int frame_rate;
-	unsigned int bit_rate;
-	unsigned int frame_dur;
-	unsigned int frame_data;
-	unsigned int error_count;
-	unsigned int status;
-	unsigned int frame_count;
-	unsigned int error_frame_count;
-	unsigned int drop_frame_count;
-	unsigned long long total_data;
-	unsigned int samp_cnt;
-	unsigned int offset;
-	unsigned int ratio_control;
-	char reserved[32];
+	u32 ver;
+	u32 frame_width;
+	u32 frame_height;
+	u32 frame_rate;
+	union {
+		u32 bit_rate;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 bit_depth_luma;
+	};
+	u32 frame_dur;
+	union {
+		u32 frame_data;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 bit_depth_chroma;
+	};
+	u32 error_count;
+	u32 status;
+	u32 frame_count;
+	u32 error_frame_count;
+	u32 drop_frame_count;
+	u64 total_data;
+	union {
+		u32 samp_cnt;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 double_write_mode;
+	};
+	u32 offset;
+	u32 ratio_control;
+	char reserved[0];
+	unsigned int i_decoded_frames;/*i frames decoded*/
+	unsigned int i_lost_frames;/*i frames can not be decoded*/
+	unsigned int i_concealed_frames;/*i frames decoded but have some error*/
+	unsigned int p_decoded_frames;
+	unsigned int p_lost_frames;
+	unsigned int p_concealed_frames;
+	unsigned int b_decoded_frames;
+	unsigned int b_lost_frames;
+	unsigned int b_concealed_frames;
+	char endipb_line[0];
 };
 
 struct adec_status {
@@ -517,7 +561,12 @@ struct userdata_param_t {
 	struct userdata_meta_info_t meta_info; /*output*/
 };
 
-
+struct usr_crc_info_t {
+	u32 id;
+	u32 pic_num;
+	u32 y_crc;
+	u32 uv_crc;
+};
 
 /*******************************************************************
 * 0x100~~0x1FF : set cmd
@@ -563,6 +612,7 @@ struct userdata_param_t {
 #define AMSTREAM_SET_VIDEO_DELAY_LIMIT_MS 0x11A
 #define AMSTREAM_SET_AUDIO_DELAY_LIMIT_MS 0x11B
 #define AMSTREAM_SET_DRMMODE 0x11C
+#define AMSTREAM_SET_WORKMODE 0x11D
 
 /*  video set   cmd */
 #define AMSTREAM_SET_OMX_VPTS 0x160
@@ -591,7 +641,7 @@ struct userdata_param_t {
 #define AMSTREAM_SET_IS_RESET 0x177
 #define AMSTREAM_SET_NO_POWERDOWN   0x178
 #define AMSTREAM_SET_DV_META_WITH_EL 0x179
-
+#define AMSTREAM_SET_FCC_MODE 0x180
 
 /*  video set ex cmd */
 #define AMSTREAM_SET_EX_VIDEO_AXIS 0x260
@@ -600,6 +650,7 @@ struct userdata_param_t {
 /*  amstream set ptr cmd */
 #define AMSTREAM_SET_PTR_AUDIO_INFO 0x300
 #define AMSTREAM_SET_PTR_CONFIGS 0x301
+#define AMSTREAM_SET_PTR_HDR10P_DATA 0x302
 
 /*  amstream get cmd */
 #define AMSTREAM_GET_SUB_LENGTH 0x800
@@ -623,6 +674,8 @@ struct userdata_param_t {
 #define AMSTREAM_GET_ION_ID 0x812
 #define AMSTREAM_GET_NEED_MORE_DATA 0x813
 #define AMSTREAM_GET_FREED_HANDLE 0x814
+#define AMSTREAM_GET_VPTS_U64 0x815
+#define AMSTREAM_GET_APTS_U64 0x816
 /*  video get cmd */
 #define AMSTREAM_GET_OMX_VPTS 0x860
 #define AMSTREAM_GET_TRICK_STAT 0x861
@@ -638,6 +691,7 @@ struct userdata_param_t {
 #define AMSTREAM_GET_FREERUN_MODE 0x86B
 #define AMSTREAM_GET_3D_TYPE 0x86C
 #define AMSTREAM_GET_VSYNC_SLOW_FACTOR 0x86D
+#define AMSTREAM_GET_OFFSET 0x86E
 
 /*  amstream get ex cmd */
 #define AMSTREAM_GET_EX_VB_STATUS 0x900
@@ -656,6 +710,12 @@ struct userdata_param_t {
 
 #define AMSTREAM_IOC_VERSION_FIRST 2
 #define AMSTREAM_IOC_VERSION_SECOND 0
+
+enum fcc_mode_e {
+	FCC_DEC_MODE,
+	FCC_DISCARD_MODE,
+	FCC_BUTT
+};
 
 struct am_ioctl_parm {
 	union {
@@ -696,10 +756,10 @@ struct am_ioctl_parm_ptr {
 };
 
 struct vframe_qos_s {
-	int num;
-	int type;
-	int size;
-	int pts;
+	u32 num;
+	u32 type;
+	u32 size;
+	u32 pts;
 	int max_qp;
 	int avg_qp;
 	int min_qp;
@@ -709,8 +769,109 @@ struct vframe_qos_s {
 	int max_mv;
 	int min_mv;
 	int avg_mv;
-	int decode_buffer;
+	int decode_buffer;//For padding currently
 } /*vframe_qos */;
+
+
+struct vframe_comm_s {
+	int vdec_id;
+	char vdec_name[16];
+	u32 vdec_type;
+};
+
+
+struct vframe_counter_s {
+	struct vframe_qos_s qos;
+	u32  decode_time_cost;/*us*/
+	u32 frame_width;
+	u32 frame_height;
+	u32 frame_rate;
+	union {
+		u32 bit_rate;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 bit_depth_luma;
+	};
+	u32 frame_dur;
+	union {
+		u32 frame_data;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 bit_depth_chroma;
+	};
+	u32 error_count;
+	u32 status;
+	u32 frame_count;
+	u32 error_frame_count;
+	u32 drop_frame_count;
+	u64 total_data;//this member must be 8 bytes alignment
+	union {
+		u32 samp_cnt;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 double_write_mode;
+	};
+	u32 offset;
+	u32 ratio_control;
+	u32 vf_type;
+	u32 signal_type;
+	u32 pts;
+	u64 pts_us64;
+	/*mediacodec report*/
+	unsigned int i_decoded_frames; //i frames decoded
+	unsigned int i_lost_frames;//i frames can not be decoded
+	unsigned int i_concealed_frames;//i frames decoded but have some error
+	unsigned int p_decoded_frames;
+	unsigned int p_lost_frames;
+	unsigned int p_concealed_frames;
+	unsigned int b_decoded_frames;
+	unsigned int b_lost_frames;
+	unsigned int b_concealed_frames;
+	unsigned int av_resynch_counter;
+};
+
+struct vframe_counter_s_old {
+	struct vframe_qos_s qos;
+	u32  decode_time_cost;/*us*/
+	u32 frame_width;
+	u32 frame_height;
+	u32 frame_rate;
+	union {
+		u32 bit_rate;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 bit_depth_luma;
+	};
+	u32 frame_dur;
+	union {
+		u32 frame_data;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 bit_depth_chroma;
+	};
+	u32 error_count;
+	u32 status;
+	u32 frame_count;
+	u32 error_frame_count;
+	u32 drop_frame_count;
+	u64 total_data;//this member must be 8 bytes alignment
+	union {
+		u32 samp_cnt;
+		/* Effective in h265,vp9,avs2 multi-instance */
+		u32 double_write_mode;
+	};
+	u32 offset;
+	u32 ratio_control;
+	u32 vf_type;
+	u32 signal_type;
+	u32 pts;
+	u64 pts_us64;
+};
+
+struct vdec_frames_s {
+	u64 hw_decode_start;
+	u64 hw_decode_time;
+	u32 frame_size;
+	u32 rd;
+	u32 wr;
+	struct vframe_comm_s comm;
+	struct vframe_counter_s fifo_buf[NUM_FRAME_VDEC];
+};
 
 enum FRAME_FORMAT {
 	FRAME_FORMAT_UNKNOWN,
@@ -718,7 +879,7 @@ enum FRAME_FORMAT {
 	FRAME_FORMAT_INTERLACE,
 };
 
-#define QOS_FRAME_NUM 60
+
 struct av_info_t {
 	/*auido info*/
 	int sample_rate;
@@ -744,6 +905,7 @@ struct av_info_t {
 	unsigned int dec_frame_count;/*vdec frame count*/
 	unsigned int dec_drop_frame_count;/*drop frame num*/
 	int tsync_mode;
+	unsigned int dec_video_bps;/*video bitrate*/
 };
 
 struct av_param_info_t {
@@ -753,11 +915,41 @@ struct av_param_qosinfo_t {
 	struct vframe_qos_s vframe_qos[QOS_FRAME_NUM];
 };
 
+/*This is a versioning structure, the key member is the struct_size.
+ *In the 1st version it is not used,but will have its role in fureture.
+ *https://bytes.com/topic/c/answers/811125-struct-versioning
+ */
+struct av_param_mvdec_t {
+	int vdec_id;
 
-#define SUPPORT_VDEC_NUM	(20)
+	/*This member is used for versioning this structure.
+	 *When passed from userspace, its value must be
+	 *sizeof(struct av_param_mvdec_t)
+	 */
+	int struct_size;
+
+	int slots;
+
+	struct vframe_comm_s comm;
+	struct vframe_counter_s minfo[QOS_FRAME_NUM];
+};
+
+/*old report struct*/
+struct av_param_mvdec_t_old {
+	int vdec_id;
+
+	int struct_size;
+
+	int slots;
+
+	struct vframe_comm_s comm;
+	struct vframe_counter_s_old minfo[QOS_FRAME_NUM];
+};
+
+#define SUPPORT_VDEC_NUM	(64)
 int vcodec_profile_register(const struct codec_profile_t *vdec_profile);
 ssize_t vcodec_profile_read(char *buf);
-
+bool is_support_profile(char *name);
 #ifdef __KERNEL__
 #include <linux/interrupt.h>
 
@@ -783,6 +975,10 @@ struct tsdemux_ops {
 	int (*set_skipbyte)(int skipbyte);
 
 	int (*set_demux)(int dev);
+
+	unsigned long (*hw_dmx_lock)(unsigned long flags);
+
+	int (*hw_dmx_unlock)(unsigned long flags);
 };
 
 void tsdemux_set_ops(struct tsdemux_ops *ops);

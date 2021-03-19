@@ -146,7 +146,6 @@ static void vb2_warn_zero_bytesused(struct vb2_buffer *vb)
 		return;
 
 	check_once = true;
-	WARN_ON(1);
 
 	pr_warn("use of bytesused == 0 is deprecated and will be removed in the future,\n");
 	if (vb->vb2_queue->allow_zero_bytesused)
@@ -204,7 +203,7 @@ static void __fill_v4l2_buffer(struct vb2_buffer *vb, void *pb)
 	b->timestamp = ns_to_timeval(vb->timestamp);
 	b->timecode = vbuf->timecode;
 	b->sequence = vbuf->sequence;
-	b->reserved2 = 0;
+	b->reserved2 = vbuf->private;
 	b->reserved = 0;
 
 	if (q->is_multiplanar) {
@@ -436,6 +435,7 @@ static int __fill_vb2_buffer(struct vb2_buffer *vb,
 	} else {
 		/* Zero any output buffer flags as this is a capture buffer */
 		vbuf->flags &= ~V4L2_BUFFER_OUT_FLAGS;
+		vbuf->private = b->reserved2;
 	}
 
 	return 0;

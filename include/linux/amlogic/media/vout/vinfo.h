@@ -23,7 +23,7 @@
 /* the MSB is represent vmode set by vmode_init */
 #define	VMODE_INIT_BIT_MASK	0x8000
 #define	VMODE_MODE_BIT_MASK	0xff
-#define VMODE_NULL_DISP_MAX	3
+#define VMODE_NULL_DISP_MAX	2
 
 enum vmode_e {
 	VMODE_HDMI = 0,
@@ -31,7 +31,9 @@ enum vmode_e {
 	VMODE_LCD,
 	VMODE_NULL, /* null mode is used as temporary witch mode state */
 	VMODE_INVALID,
-	VMODE_DUMMY_LCD,
+	VMODE_DUMMY_ENCP,
+	VMODE_DUMMY_ENCI,
+	VMODE_DUMMY_ENCL,
 	VMODE_MAX,
 	VMODE_INIT_NULL,
 	VMODE_MASK = 0xFF,
@@ -102,6 +104,7 @@ struct hdr10_plus_info {
 struct hdr_info {
 /* RX EDID hdr support types */
 	u32 hdr_support;
+	unsigned char rawdata[7];
 /*
  *dynamic_info[0] expresses type1's parameters certainly
  *dynamic_info[1] expresses type2's parameters certainly
@@ -138,6 +141,7 @@ enum eotf_type {
 	EOTF_T_HDR10,
 	EOTF_T_SDR,
 	EOTF_T_LL_MODE,
+	EOTF_T_DV_AHEAD,
 	EOTF_T_MAX,
 };
 
@@ -150,11 +154,16 @@ enum mode_type {
 
 #define DV_IEEE_OUI	0x00D046
 #define HDR10_PLUS_IEEE_OUI	0x90848B
+#define HDR10_PLUS_DISABLE_VSIF 0
+#define HDR10_PLUS_ENABLE_VSIF  1
+#define HDR10_PLUS_ZERO_VSIF    2
+
 
 /* Dolby Version VSIF  parameter*/
 struct dv_vsif_para {
 	uint8_t ver; /* 0 or 1 or 2*/
 	uint8_t length;/*ver1: 15 or 12*/
+	uint8_t ver2_l11_flag;
 	union {
 		struct {
 			uint8_t low_latency:1;
@@ -167,7 +176,37 @@ struct dv_vsif_para {
 			uint8_t auxiliary_runversion;
 			uint8_t auxiliary_debug0;
 		} ver2;
+		struct {
+			uint8_t low_latency:1;
+			uint8_t dobly_vision_signal:1;
+			uint8_t backlt_ctrl_MD_present:1;
+			uint8_t auxiliary_MD_present:1;
+			uint8_t eff_tmax_PQ_hi;
+			uint8_t eff_tmax_PQ_low;
+			uint8_t auxiliary_runmode;
+			uint8_t auxiliary_runversion;
+			uint8_t auxiliary_debug0;
+			uint8_t content_type;
+			uint8_t content_sub_type;
+			uint8_t crf;
+			uint8_t intended_white_point;
+			uint8_t l11_byte2;
+			uint8_t l11_byte3;
+		} ver2_l11;
 	} vers;
+};
+
+struct vsif_debug_save {
+	enum eotf_type type;
+	enum mode_type tunnel_mode;
+	struct dv_vsif_para data;
+	bool signal_sdr;
+};
+
+struct emp_debug_save {
+	unsigned char data[128];
+	unsigned int type;
+	unsigned int size;
 };
 
 /* Dolby Version support information from EDID*/
@@ -192,6 +231,7 @@ struct dv_info {
 	uint8_t sup_2160p60hz:1;
 	/* if as 0, then support 2160p30hz */
 	uint8_t sup_global_dimming:1;
+	uint8_t dv_emp_cap:1;
 	uint16_t Rx;
 	uint16_t Ry;
 	uint16_t Gx;
@@ -219,12 +259,20 @@ struct vout_device_s {
 	const struct dv_info *dv_info;
 	void (*fresh_tx_hdr_pkt)(struct master_display_info_s *data);
 	void (*fresh_tx_vsif_pkt)(enum eotf_type type,
-		enum mode_type tunnel_mode, struct dv_vsif_para *data);
+		enum mode_type tunnel_mode, struct dv_vsif_para *data,
+		bool signal_sdr);
 	void (*fresh_tx_hdr10plus_pkt)(unsigned int flag,
 		struct hdr10plus_para *data);
 	void  (*fresh_tx_emp_pkt)(unsigned char *data, unsigned int type,
 	unsigned int size);
 };
+
+extern int send_dv_emp(enum eotf_type type,
+	enum mode_type tunnel_mode,
+	struct dv_vsif_para *vsif_data,
+	unsigned char *p_vsem,
+	int vsem_len,
+	bool signal_sdr);
 
 struct vinfo_base_s {
 	enum vmode_e mode;
@@ -254,6 +302,7 @@ struct vinfo_s {
 	char *name;
 	enum vmode_e mode;
 	char ext_name[32];
+	u32 frac;
 	u32 width;
 	u32 height;
 	u32 field_height;
@@ -266,6 +315,7 @@ struct vinfo_s {
 	u32 video_clk;
 	u32 htotal;
 	u32 vtotal;
+	unsigned char hdmichecksum[10];
 	enum vinfo_3d_e info_3d;
 	enum vout_fr_adj_type_e fr_adj_type;
 	enum color_fmt_e viu_color_fmt;

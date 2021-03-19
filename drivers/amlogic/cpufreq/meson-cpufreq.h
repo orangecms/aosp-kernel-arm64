@@ -29,8 +29,6 @@
 #define HIGH_FREQ_CLK_PARENT	"high_freq_clk_parent"
 #define DSU_CLK		"dsu_clk"
 #define DSU_PRE_PARENT "dsu_pre_parent"
-#define to_meson_dvfs_cpu_nb(_nb) container_of(_nb,	\
-		struct meson_cpufreq_driver_data, freq_transition)
 
 static struct clk *clk[MAX_CLUSTERS];
 static struct cpufreq_frequency_table *freq_table[MAX_CLUSTERS];
@@ -42,7 +40,6 @@ static struct cpufreq_frequency_table *freq_table[MAX_CLUSTERS];
 /*mid rate for set parent,Khz*/
 static unsigned int mid_rate = (1000 * 1000);
 static unsigned int gap_rate = (10 * 1000 * 1000);
-static struct cpufreq_freqs freqs;
 
 /*
  * DSU_LOW_RATE:cpu clk less than DSU_LOW_RATE(1.2G)
@@ -57,16 +54,10 @@ static struct cpufreq_freqs freqs;
 #define DSU_HIGH_RATE (1500 * 1000)
 #define CPU_CMP_RATE (1800 * 1000)
 
+unsigned int gp1_clk_target;
 /*whether use different tables or not*/
 bool cpufreq_tables_supply;
-static unsigned int hispeed_cpufreq_max;
-static unsigned int medspeed_cpufreq_max;
-static unsigned int lospeed_cpufreq_max;
-enum cpufreq_index {
-	LOSPEED_INDEX,
-	MEDSPEED_INDEX,
-	HISPEED_INDEX
-};
+#define GET_DVFS_TABLE_INDEX           0x82000088
 
 struct meson_cpufreq_driver_data {
 	struct device *cpu_dev;
@@ -78,7 +69,6 @@ struct meson_cpufreq_driver_data {
 	struct clk *low_freq_clk_p;
 	struct clk *clk_dsu;
 	struct clk *clk_dsu_pre;
-	struct notifier_block freq_transition;
 };
 
 static struct mutex cluster_lock[MAX_CLUSTERS];
@@ -87,6 +77,5 @@ static unsigned int meson_cpufreq_set_rate(struct cpufreq_policy *policy,
 					   u32 cur_cluster, u32 rate);
 static int meson_regulator_set_volate(struct regulator *regulator, int old_uv,
 				      int new_uv, int tol_uv);
-int get_cpufreq_tables_efuse(u32 cur_cluster);
 int choose_cpufreq_tables_index(const struct device_node *np, u32 cur_cluster);
 #endif /* __MESON_CPUFREQ_H */

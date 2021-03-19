@@ -58,10 +58,14 @@
 			cpu-idle-states = <&CPU_SLEEP_0>;
 			clocks = <&clkc CLKID_CPU_CLK>,
 				<&clkc CLKID_CPU_FCLK_P>,
-				<&clkc CLKID_SYS_PLL>;
+				<&clkc CLKID_SYS_PLL>,
+				<&clkc CLKID_DSU_CLK>,
+				<&clkc CLKID_DSU_PRE_CLK>;
 			clock-names = "core_clk",
 				"low_freq_clk_parent",
-				"high_freq_clk_parent";
+				"high_freq_clk_parent",
+				"dsu_clk",
+				"dsu_pre_parent";
 			operating-points-v2 = <&cpu_opp_table0>;
 			cpu-supply = <&vddcpu0>;
 			voltage-tolerance = <0>;
@@ -76,10 +80,14 @@
 			cpu-idle-states = <&CPU_SLEEP_0>;
 			clocks = <&clkc CLKID_CPU_CLK>,
 				<&clkc CLKID_CPU_FCLK_P>,
-				<&clkc CLKID_SYS_PLL>;
+				<&clkc CLKID_SYS_PLL>,
+				<&clkc CLKID_DSU_CLK>,
+				<&clkc CLKID_DSU_PRE_CLK>;
 			clock-names = "core_clk",
 				"low_freq_clk_parent",
-				"high_freq_clk_parent";
+				"high_freq_clk_parent",
+				"dsu_clk",
+				"dsu_pre_parent";
 			operating-points-v2 = <&cpu_opp_table0>;
 			cpu-supply = <&vddcpu0>;
 			voltage-tolerance = <0>;
@@ -94,10 +102,14 @@
 			cpu-idle-states = <&CPU_SLEEP_0>;
 			clocks = <&clkc CLKID_CPU_CLK>,
 				<&clkc CLKID_CPU_FCLK_P>,
-				<&clkc CLKID_SYS_PLL>;
+				<&clkc CLKID_SYS_PLL>,
+				<&clkc CLKID_DSU_CLK>,
+				<&clkc CLKID_DSU_PRE_CLK>;
 			clock-names = "core_clk",
 				"low_freq_clk_parent",
-				"high_freq_clk_parent";
+				"high_freq_clk_parent",
+				"dsu_clk",
+				"dsu_pre_parent";
 			operating-points-v2 = <&cpu_opp_table0>;
 			cpu-supply = <&vddcpu0>;
 			voltage-tolerance = <0>;
@@ -112,10 +124,14 @@
 			cpu-idle-states = <&CPU_SLEEP_0>;
 			clocks = <&clkc CLKID_CPU_CLK>,
 				<&clkc CLKID_CPU_FCLK_P>,
-				<&clkc CLKID_SYS_PLL>;
+				<&clkc CLKID_SYS_PLL>,
+				<&clkc CLKID_DSU_CLK>,
+				<&clkc CLKID_DSU_PRE_CLK>;
 			clock-names = "core_clk",
 				"low_freq_clk_parent",
-				"high_freq_clk_parent";
+				"high_freq_clk_parent",
+				"dsu_clk",
+				"dsu_pre_parent";
 			operating-points-v2 = <&cpu_opp_table0>;
 			cpu-supply = <&vddcpu0>;
 			voltage-tolerance = <0>;
@@ -223,10 +239,16 @@
 		reg = <0x0 0xff63c400 0x0 0x4c>,   /* MHU registers */
 		      <0x0 0xfffe7000 0x0 0x800>;   /* Payload area */
 		interrupts = <0 209 1>,   /* low priority interrupt */
-			     <0 210 1>;   /* high priority interrupt */
+			     <0 210 1>,   /* bl4 receive interrupt */
+			     <0 213 1>;   /* bl4 send interrupt */
 		#mbox-cells = <1>;
-		mbox-names = "cpu_to_scp_low", "cpu_to_scp_high";
-		mboxes = <&mailbox 0 &mailbox 1>;
+		mbox-names = "cpu_to_scp_low", "bl4_to_cpu", "cpu_to_bl4";
+		mboxes = <&mailbox 0 &mailbox 1 &mailbox 2>;
+		num-chans-to-scp = <1>;  /*number of chans to send m3*/
+		send-isr-bits = <5>;     /*BIT(idx) of isr listen when ap send*/
+		ack-isr-bits = <4>;      /*BIT(idx) of ack isr*/
+		m4-isr-bits = <6>;       /*BIT(idx) of m4 isr*/
+		mbox-chans = <3>;        /*chan number*/
 	};
 
 	cpu_iomap {
@@ -297,12 +319,23 @@
 		/* 4: 333.3M    5: 400.0M    6: 500.0M    7: 666.7M */
 	};
 
+	meson_uvm{
+		compatible = "amlogic, meson_uvm";
+		status = "okay";
+	};
+
+	meson_videotunnel{
+		compatible = "amlogic, meson_videotunnel";
+		status = "okay";
+	};
+
 	ethmac: ethernet@ff3f0000 {
 		compatible = "amlogic, g12a-eth-dwmac","snps,dwmac";
 		reg = <0x0 0xff3f0000 0x0 0x10000
 			0x0 0xff634540 0x0 0x8
-			0x0 0xff64c000 0x0 0xa0>;
-		reg-names = "eth_base", "eth_cfg", "eth_pll";
+			0x0 0xff64c000 0x0 0xa0
+			0x0 0xffd01008 0x0 0x4>;
+		reg-names = "eth_base", "eth_cfg", "eth_pll", "eth_reset";
 		interrupts = <0 8 1>;
 		interrupt-names = "macirq";
 		status = "disabled";
@@ -484,6 +517,11 @@
 		      <0x0 0xff63c100 0x0 0x10>;
 	};
 
+	bl40: bl40 {
+		compatible = "amlogic, bl40-bootup";
+		status = "okay";
+	};
+
 	soc {
 		compatible = "simple-bus";
 		#address-cells = <2>;
@@ -650,6 +688,7 @@
 			aoclkc: clock-controller@0 {
 				compatible = "amlogic,sm1-aoclkc";
 				#clock-cells = <1>;
+				#reset-cells = <1>;
 				reg = <0x0 0x0 0x0 0x3dc>;
 			};
 
@@ -729,6 +768,15 @@
 				pinctrl-names = "default";
 				pinctrl-0 = <&ao_b_uart_pins>;
 			};
+
+			irblaster: meson-irblaster@14c {
+				compatible = "amlogic, meson_irblaster";
+				reg = <0x0 0x14c 0x0 0x10>,
+					<0x0 0x40 0x0 0x4>;
+				#irblaster-cells = <2>;
+				interrupts = <GIC_SPI 198 IRQ_TYPE_EDGE_RISING>;
+				status = "disabled";
+			};
 		};/* end of aobus */
 
 		periphs: periphs@ff634400 {
@@ -757,6 +805,9 @@
 				compatible = "amlogic,sm1-clkc-2";
 				#clock-cells = <1>;
 				reg = <0x0 0x0 0x0 0x3dc>;
+				own-dsu-clk;
+				clocks = <&clkc CLKID_FCLK_DIV2>;
+				clock-names = "clkin0";
 			};
 		};/* end of hiubus*/
 
@@ -767,10 +818,10 @@
 
 		audiobus: audiobus@0xFF660000 {
 			compatible = "amlogic, audio-controller", "simple-bus";
-			reg = <0x0 0xFF660000 0x0 0x4000>;
+			reg = <0x0 0xFF660000 0x0 0x3000>;
 			#address-cells = <2>;
 			#size-cells = <2>;
-			ranges = <0x0 0x0 0x0 0xFF660000 0x0 0x4000>;
+			ranges = <0x0 0x0 0x0 0xFF660000 0x0 0x3000>;
 			clkaudio: audio_clocks {
 				compatible = "amlogic, sm1-audio-clocks";
 				#clock-cells = <1>;
@@ -796,6 +847,82 @@
 			};
 		};/* end of audiobus*/
 
+		/* eARC */
+		audio_earc: bus@ff663000 {
+			compatible = "simple-bus";
+			reg = <0x0 0xff663000 0x0 0x1000>;
+			#address-cells = <2>;
+			#size-cells = <2>;
+			ranges = <0x0 0x0 0x0 0xff663000 0x0 0x1000>;
+
+			earc: earc@0 {
+				compatible = "amlogic, sm1-snd-earc";
+				#sound-dai-cells = <0>;
+
+				status = "disabled";
+
+				reg =
+					<0x0 0x800 0x0 0x400>,
+					<0x0 0xc00 0x0 0x200>,
+					<0x0 0xe00 0x0 0x200>;
+				reg-names =
+					"rx_cmdc",
+					"rx_dmac",
+					"rx_top";
+
+				clocks = < &clkaudio CLKID_EARCRX_CMDC
+					&clkaudio CLKID_EARCRX_DMAC
+					&clkc CLKID_FCLK_DIV4
+					&clkc CLKID_FCLK_DIV4
+					&clkaudio CLKID_EARCTX_CMDC
+					&clkaudio CLKID_EARCTX_DMAC
+					&clkc CLKID_FCLK_DIV4
+					&clkc CLKID_MPLL1
+					>;
+				clock-names =
+					"rx_cmdc",
+					"rx_dmac",
+					"rx_cmdc_srcpll",
+					"rx_dmac_srcpll";
+
+				interrupts = <
+					GIC_SPI 87 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-names = "earc_rx";
+			};
+		};
+
+		/* Sound iomap */
+		aml_snd_iomap {
+			compatible = "amlogic, snd-iomap";
+			status = "okay";
+			#address-cells=<2>;
+			#size-cells=<2>;
+			ranges;
+			pdm_bus {
+				reg = <0x0 0xFF661000 0x0 0x400>;
+			};
+			audiobus_base {
+				reg = <0x0 0xFF660000 0x0 0x1000>;
+			};
+			audiolocker_base {
+				reg = <0x0 0xFF661400 0x0 0x400>;
+			};
+			eqdrc_base {
+				reg = <0x0 0xFF662000 0x0 0x1000>;
+			};
+			reset_base {
+				reg = <0x0 0xFFD01000 0x0 0x1000>;
+			};
+			vad_base {
+				reg = <0x0 0xFF661800 0x0 0x400>;
+			};
+			resampleA_base {
+				reg = <0x0 0xFF661c00 0x0 0x104>;
+			};
+			resampleB_base {
+				reg = <0x0 0xFF664000 0x0 0x104>;
+			};
+		};
 	}; /* end of soc*/
 
 	remote:rc@0xff808040 {
@@ -1072,6 +1199,7 @@
 		ic_type = <12>;
 		vend_data: vend_data{ /* Should modified by Customer */
 			vendor_name = "Amlogic"; /* Max Chars: 8 */
+			product_desc = "MBox Meson Ref"; /* Max Chars: 16 */
 			/* standards.ieee.org/develop/regauth/oui/oui.txt */
 			vendor_id = <0x000000>;
 		};
@@ -1080,7 +1208,7 @@
 	galcore {
 		compatible = "amlogic, galcore";
 		dev_name = "galcore";
-		status = "disabled";
+		status = "okay";
 		clocks = <&clkc CLKID_VNANOQ_AXI_CLK_COMP>,
 			<&clkc CLKID_VNANOQ_CORE_CLK_COMP>;
 		clock-names = "cts_vipnanoq_axi_clk_composite",
@@ -1088,15 +1216,16 @@
 		interrupts = <0 186 4>;
 		interrupt-names = "galcore";
 		reg = <0x0 0xff100000 0x0 0x800
-			/*reg base value:0xff100000 */
 			0x0 0xff000000 0x0 0x400000
-			/*Sram bse value:0xff000000*/
 			0x0 0xff63c118 0x0 0x0
 			0x0 0xff63c11c 0x0 0x0
-			/*0xff63c118,0xff63c11c :nanoq mem regs*/
 			0x0 0xffd01088 0x0 0x0
-			/*0xffd01088:reset reg*/
+			0x0 0xff63c1c8 0x0 0x0
 			>;
+		reg-names = "NN_REG","NN_SRAM","NN_MEM0",
+			"NN_MEM1","NN_RESET","NN_CLK";
+		nn_power_version = <3>;
+		nn_efuse = <0xff63003c 0x20>;
 	};
 	aocec: aocec {
 		compatible = "amlogic, aocec-sm1";
@@ -1111,6 +1240,7 @@
 		cec_osd_string = "AML_MBOX"; /* Max Chars: 14    */
 		cec_version = <5>;/*5:1.4;6:2.0*/
 		port_num = <1>;
+		output = <1>;
 		ee_cec;
 		arc_port_mask = <0x2>;
 		interrupts = <0 203 1
@@ -1168,6 +1298,13 @@
 		compatible = "amlogic, vout";
 		dev_name = "vout";
 		status = "okay";
+
+		/* fr_policy:
+		 *    0: disable
+		 *    1: nearby (only for 60->59.94 and 30->29.97)
+		 *    2: force (60/50/30/24/59.94/23.97)
+		 */
+		fr_policy = <2>;
 	};
 
 	vout2 {
@@ -1178,6 +1315,34 @@
 			<&clkc CLKID_VPU_CLKC_MUX>;
 		clock-names = "vpu_clkc0",
 			"vpu_clkc";
+
+		/* fr_policy:
+		 *    0: disable
+		 *    1: nearby (only for 60->59.94 and 30->29.97)
+		 *    2: force (60/50/30/24/59.94/23.97)
+		 */
+		fr_policy = <2>;
+	};
+
+	dummy_venc: dummy_venc {
+		compatible = "amlogic, dummy_venc";
+		status = "okay";
+		clocks = <&clkc CLKID_VCLK2_ENCP
+			&clkc CLKID_VCLK2_VENCP0
+			&clkc CLKID_VCLK2_VENCP1
+			&clkc CLKID_VCLK2_ENCI
+			&clkc CLKID_VCLK2_VENCI0
+			&clkc CLKID_VCLK2_VENCI1
+			&clkc CLKID_VCLK2_ENCL
+			&clkc CLKID_VCLK2_VENCL>;
+		clock-names = "encp_top_gate",
+			"encp_int_gate0",
+			"encp_int_gate1",
+			"venci_top_gate",
+			"enci_int_gate0",
+			"enci_int_gate1",
+			"encl_top_gate",
+			"encl_int_gate";
 	};
 
 	vdac {
@@ -1294,6 +1459,12 @@
 		status = "okay";
 	};
 
+	video_composer {
+		compatible = "amlogic, video_composer";
+		dev_name = "video_composer";
+		status = "okay";
+	};
+
 	amvenc_avc{
 		compatible = "amlogic, amvenc_avc";
 		dev_name = "amvenc_avc";
@@ -1343,15 +1514,6 @@
 		clocks = <&clkc CLKID_VPU_CLKC_MUX>;
 		clock-names = "vpu_clkc";
 	};
-	irblaster: meson-irblaster {
-		compatible = "amlogic, meson_irblaster";
-		reg = <0x0 0xff80014c 0x0 0x10>,
-			<0x0 0xff800040 0x0 0x4>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&irblaster_pins>;
-		interrupts = <0 198 1>;
-		status = "okay";
-	};
 
 	sd_emmc_c: emmc@ffe07000 {
 		status = "disabled";
@@ -1381,7 +1543,7 @@
 			pinname = "emmc";
 			ocr_avail = <0x200080>; /**VDD voltage 3.3 ~ 3.4 */
 			/*caps defined in dts*/
-			tx_delay = <0>;
+			tx_delay = <0x13>;
 			co_phase = <3>;
 			max_req_size = <0x20000>; /**128KB*/
 			gpio_dat3 = <&gpio BOOT_3 GPIO_ACTIVE_HIGH>;
@@ -1407,7 +1569,8 @@
 			"sd_to_ao_uart_pins",
 			"ao_to_sd_uart_pins",
 			"sd_to_ao_jtag_pins",
-			"ao_to_sd_jtag_pins";
+			"ao_to_sd_jtag_pins",
+			"sd_all_pd_pins";
 
 		pinctrl-0 = <&sd_all_pins>;
 		pinctrl-1 = <&sd_clk_cmd_pins>;
@@ -1422,6 +1585,7 @@
 		pinctrl-7 = <&sd_all_pins &sd_to_ao_uart_pins>;
 		pinctrl-8 = <&sd_to_ao_uart_clr_pins
 			&ao_to_sd_uart_pins>;
+		pinctrl-9 = <&sd_all_pd_pins>;
 
 		clocks = <&clkc CLKID_SD_EMMC_B>,
 			<&clkc CLKID_SD_EMMC_B_P0_COMP>,
@@ -1490,64 +1654,18 @@
 		status = "disabled";
 		reg = <0x0 0xFFE07800 0x0 0x200>;
 		interrupts = <0 34 1>;
-
 		pinctrl-names = "nand_rb_mod","nand_norb_mod", "nand_cs_only";
 		pinctrl-0 = <&all_nand_pins>;
 		pinctrl-1 = <&all_nand_pins>;
 		pinctrl-2 = <&nand_cs_pins>;
-		clocks = <&clkc CLKID_SD_EMMC_C>,
-				<&clkc CLKID_SD_EMMC_C_P0_COMP>;
-		clock-names = "core", "clkin";
-
 		device_id = <0>;
-		/*fip/tpl configurations, must be same
-		 * with uboot if bl_mode was set as 1
-		 * bl_mode: 0 compact mode; 1 descrete mode
-		 * if bl_mode was set as 1, fip configuration will work
-		 */
+		clocks = <&clkc CLKID_SD_EMMC_C>,
+			<&clkc CLKID_FCLK_DIV2>;
+		clock-names = "gate", "fdiv2pll";
 		bl_mode = <1>;
-		/*copy count of fip*/
 		fip_copies = <4>;
-		/*size of each fip copy */
 		fip_size = <0x200000>;
 		nand_clk_ctrl = <0xFFE07000>;
-		/*partions defined in dts */
-	};
-
-	/* Sound iomap */
-	aml_snd_iomap {
-		compatible = "amlogic, snd-iomap";
-		status = "okay";
-		#address-cells=<2>;
-		#size-cells=<2>;
-		ranges;
-		pdm_bus {
-			reg = <0x0 0xFF661000 0x0 0x400>;
-		};
-		audiobus_base {
-			reg = <0x0 0xFF660000 0x0 0x1000>;
-		};
-		audiolocker_base {
-			reg = <0x0 0xFF661400 0x0 0x400>;
-		};
-		eqdrc_base {
-			reg = <0x0 0xFF662000 0x0 0x1000>;
-		};
-		reset_base {
-			reg = <0x0 0xFFD01000 0x0 0x1000>;
-		};
-		vad_base {
-			reg = <0x0 0xFF661800 0x0 0x400>;
-		};
-		earcrx_cdmc_base {
-			reg = <0x0 0xFF663800 0x0 0x30>;
-		};
-		earcrx_dmac_base {
-			reg = <0x0 0xFF663C00 0x0 0x20>;
-		};
-		earcrx_top_base {
-			reg = <0x0 0xFF663E00 0x0 0x10>;
-		};
 	};
 
 	vddcpu0: pwmao_d-regulator {
@@ -1604,6 +1722,7 @@
 		status = "okay";
 		reg = <0x0 0xff638000 0x0 0x100
 		       0x0 0xff638c00 0x0 0x100>;
+		sec_base = <0xff639000>;
 		interrupts = <0 52 1>;
 		interrupt-names = "ddr_bandwidth";
 	};
@@ -1662,6 +1781,177 @@
 	cpu_ver_name {
 		compatible = "amlogic, cpu-major-id-sm1";
 	};
+
+	p_tsensor: p_tsensor@ff634800 {
+		compatible = "amlogic, r1p1-tsensor";
+		device_name = "meson-pthermal";
+		status = "okay";
+		reg = <0x0 0xff634800 0x0 0x50>,
+			<0x0 0xff800268 0x0 0x4>;
+		cal_type = <0x1>;
+		cal_a = <324>;
+		cal_b = <424>;
+		cal_c = <3159>;
+		cal_d = <9411>;
+		rtemp = <115000>;
+		interrupts = <0 35 0>;
+		clocks = <&clkc CLKID_TS_COMP>; /* CLKID_TS_COMP>;*/
+		clock-names = "ts_comp";
+		#thermal-sensor-cells = <1>;
+	};
+
+	d_tsensor: d_tsensor@ff634c00 {
+		compatible = "amlogic, r1p1-tsensor";
+		device_name = "meson-dthermal";
+		status = "okay";
+		reg = <0x0 0xff634c00 0x0 0x50>,
+			<0x0 0xff800230 0x0 0x4>;
+		cal_type = <0x1>;
+		cal_a = <324>;
+		cal_b = <424>;
+		cal_c = <3159>;
+		cal_d = <9411>;
+		rtemp = <115000>;
+		interrupts = <0 36 0>;
+		clocks = <&clkc CLKID_TS_COMP>; /* CLKID_TS_COMP>;*/
+		clock-names = "ts_comp";
+		#thermal-sensor-cells = <1>;
+	};
+
+	meson_cooldev: meson-cooldev@0 {
+			status = "okay";
+			compatible = "amlogic, meson-cooldev";
+			device_name = "mcooldev";
+			cooling_devices {
+				cpufreq_cool_cluster0 {
+					min_state = <1000000>;
+					dyn_coeff = <125>;
+					gpu_pp = <2>;
+					cluster_id = <0>;
+					node_name = "cpufreq_cool0";
+					device_type = "cpufreq";
+				};
+				cpucore_cool_cluster0 {
+					min_state = <1>;
+					dyn_coeff = <0>;
+					gpu_pp = <2>;
+					cluster_id = <0>;
+					node_name = "cpucore_cool0";
+					device_type = "cpucore";
+				};
+				gpufreq_cool {
+					min_state = <500>;
+					dyn_coeff = <215>;
+					gpu_pp = <2>;
+					cluster_id = <0>;
+					node_name = "gpufreq_cool0";
+					device_type = "gpufreq";
+				};
+				gpucore_cool {
+					min_state = <1>;
+					dyn_coeff = <0>;
+					gpu_pp = <2>;
+					cluster_id = <0>;
+					node_name = "gpucore_cool0";
+					device_type = "gpucore";
+				};
+			};
+			cpufreq_cool0:cpufreq_cool0 {
+				#cooling-cells = <2>; /* min followed by max */
+			};
+			cpucore_cool0:cpucore_cool0 {
+				#cooling-cells = <2>; /* min followed by max */
+			};
+			gpufreq_cool0:gpufreq_cool0 {
+				#cooling-cells = <2>; /* min followed by max */
+			};
+			gpucore_cool0:gpucore_cool0 {
+				#cooling-cells = <2>; /* min followed by max */
+			};
+		};
+		/*meson cooling devices end*/
+
+	thermal-zones {
+		soc_thermal: soc_thermal {
+			polling-delay = <1000>;
+			polling-delay-passive = <100>;
+			sustainable-power = <1410>;
+			thermal-sensors = <&p_tsensor 0>;
+			trips {
+				pswitch_on: trip-point@0 {
+					temperature = <60000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				pcontrol: trip-point@1 {
+					temperature = <75000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				phot: trip-point@2 {
+					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "hot";
+				};
+				pcritical: trip-point@3 {
+					temperature = <110000>;
+					hysteresis = <1000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				cpufreq_cooling_map {
+					trip = <&pcontrol>;
+					cooling-device = <&cpufreq_cool0 0 4>;
+					contribution = <1024>;
+				};
+				cpucore_cooling_map {
+					trip = <&pcontrol>;
+					cooling-device = <&cpucore_cool0 0 3>;
+					contribution = <1024>;
+				};
+				gpufreq_cooling_map {
+					trip = <&pcontrol>;
+					cooling-device = <&gpufreq_cool0 0 3>;
+					contribution = <1024>;
+				};
+				gpucore_cooling_map {
+					trip = <&pcontrol>;
+					cooling-device = <&gpucore_cool0 0 2>;
+					contribution = <1024>;
+				};
+			};
+		};
+		ddr_thermal: ddr_thermal {
+			polling-delay = <2000>;
+			polling-delay-passive = <1000>;
+			sustainable-power = <1410>;
+			thermal-sensors = <&d_tsensor 1>;
+			trips {
+				dswitch_on: trip-point@0 {
+					temperature = <60000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				dcontrol: trip-point@1 {
+					temperature = <75000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				dhot: trip-point@2 {
+					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "hot";
+				};
+				dcritical: trip-point@3 {
+					temperature = <110000>;
+					hysteresis = <1000>;
+					type = "critical";
+				};
+			};
+		};
+	};/*thermal zone end*/
 };/* end of / */
 
 &pinctrl_aobus {
@@ -1891,6 +2181,20 @@
 			bias-pull-up;
 			output-high;
 			drive-strength = <3>;
+		};
+	};
+
+	sd_all_pd_pins:sd_all_pd_pins {
+		mux {
+			groups = "GPIOC_0",
+				   "GPIOC_1",
+				   "GPIOC_2",
+				   "GPIOC_3",
+				   "GPIOC_4",
+				   "GPIOC_5";
+			function = "gpio_periphs";
+			bias-pull-down;
+			output-low;
 		};
 	};
 
@@ -2243,6 +2547,7 @@
 		mux {
 			groups = "pwm_e";
 			function = "pwm_e";
+			drive-strength = <0>;
 		};
 	};
 

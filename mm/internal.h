@@ -36,6 +36,8 @@
 /* Do not use these with a slab allocator */
 #define GFP_SLAB_BUG_MASK (__GFP_DMA32|__GFP_HIGHMEM|~__GFP_BITS_MASK)
 
+void page_writeback_init(void);
+
 int do_swap_page(struct fault_env *fe, pte_t orig_pte);
 
 void free_pgtables(struct mmu_gather *tlb, struct vm_area_struct *start_vma,
@@ -498,5 +500,15 @@ static inline void flush_tlb_batched_pending(struct mm_struct *mm)
 extern const struct trace_print_flags pageflag_names[];
 extern const struct trace_print_flags vmaflag_names[];
 extern const struct trace_print_flags gfpflag_names[];
+
+static inline bool is_migrate_highatomic(enum migratetype migratetype)
+{
+	return migratetype == MIGRATE_HIGHATOMIC;
+}
+
+static inline bool is_migrate_highatomic_page(struct page *page)
+{
+	return get_pageblock_migratetype(page) == MIGRATE_HIGHATOMIC;
+}
 
 #endif	/* __MM_INTERNAL_H */

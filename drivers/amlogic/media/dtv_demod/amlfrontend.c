@@ -56,6 +56,8 @@
 #include <linux/dma-contiguous.h>
 
 #include <linux/amlogic/media/frame_provider/tvin/tvin.h>
+#include <linux/amlogic/media/vout/vdac_dev.h>
+#include <linux/amlogic/aml_dtvdemod.h>
 
 
 MODULE_PARM_DESC(debug_aml, "\n\t\t Enable frontend debug information");
@@ -1203,18 +1205,23 @@ static int Gxtv_Demod_Dvbc_Init(/*struct aml_fe_dev *dev, */int mode)
 		sys.demod_clk = Demod_Clk_200M;
 		demod_status.tmp = Adc_mode;
 	} else {
-		sys.adc_clk = Adc_Clk_24M;
+		sys.adc_clk = ADC_CLK_24M;
 		sys.demod_clk = Demod_Clk_72M;
 		demod_status.tmp = Cry_mode;
 	}
 
-	if (is_ic_ver(IC_VER_TL1) || is_ic_ver(IC_VER_TM2)) {
-		sys.adc_clk = Adc_Clk_24M;
+	if (is_ic_ver(IC_VER_TL1)) {
+		sys.adc_clk = ADC_CLK_24M;
+		/*for timeshift mosaic issue,already fixed with tm2*/
 		sys.demod_clk = Demod_Clk_167M;
+		demod_status.tmp = Cry_mode;
+	} else if (is_ic_ver(IC_VER_TM2)) {
+		sys.adc_clk = ADC_CLK_24M;
+		sys.demod_clk = Demod_Clk_250M;
 		demod_status.tmp = Cry_mode;
 	}
 
-	demod_status.ch_if = Si2176_5M_If * 1000;
+	demod_status.ch_if = SI2176_5M_IF * 1000;
 	PR_DBG("[%s]adc_clk is %d,demod_clk is %d\n", __func__, sys.adc_clk,
 	       sys.demod_clk);
 	autoFlagsTrig = 0;
@@ -1398,9 +1405,9 @@ int Gxtv_Demod_Dvbt_Init(void)
 
 	/* 0 -DVBC, 1-DVBT, ISDBT, 2-ATSC*/
 	demod_status.dvb_mode = Gxtv_Dvbt_Isdbt;
-	sys.adc_clk = Adc_Clk_24M;
+	sys.adc_clk = ADC_CLK_24M;
 	sys.demod_clk = Demod_Clk_60M;
-	demod_status.ch_if = Si2176_5M_If * 1000;
+	demod_status.ch_if = SI2176_5M_IF * 1000;
 
 	demod_set_sys(&demod_status, &sys);
 	demod_mode_para = AML_DVBT;
@@ -1671,8 +1678,9 @@ static int gxtv_demod_atsc_set_frontend(struct dvb_frontend *fe)
 		if (atsc_flag != QAM_AUTO)
 			atsc_flag = QAM_AUTO;
 		/* demod_set_demod_reg(0x502, TXLX_ADC_REG6);*/
-		//sys_clk=167M
-		dd_tvafe_hiu_reg_write(D_HHI_DEMOD_CLK_CNTL, 0x502);
+		/*sys_clk=167M*/
+		if (!is_ic_ver(IC_VER_TM2))
+			dd_tvafe_hiu_reg_write(D_HHI_DEMOD_CLK_CNTL, 0x502);
 
 		demod_set_mode_ts(Gxtv_Dvbc);
 		param_j83b.ch_freq = c->frequency / 1000;
@@ -1684,21 +1692,36 @@ static int gxtv_demod_atsc_set_frontend(struct dvb_frontend *fe)
 		else
 			param_j83b.symb_rate = 5361;
 
-		if (is_ic_ver(IC_VER_TL1) || is_ic_ver(IC_VER_TM2)) {
-			//for timeshift mosaic
+		if (is_ic_ver(IC_VER_TL1)) {
+			/*for timeshift mosaic issue,already fixed with tm2*/
 			demod_status.clk_freq = Demod_Clk_167M;
 			nco_rate = (demod_status.adc_freq * 256)
 				/ demod_status.clk_freq + 2;
 			front_write_reg_v4(0x20,
 				((front_read_reg_v4(0x20) & ~0xff)
 				| (nco_rate & 0xff)));
-			front_write_reg_v4(0x2f, 0x5);//for timeshift mosaic
+			/*for timeshift mosaic issue,already fixed with tm2*/
+			front_write_reg_v4(0x2f, 0x5);
+		} else if (is_ic_ver(IC_VER_TM2)) {
+			nco_rate = (demod_status.adc_freq * 256)
+				/ demod_status.clk_freq + 2;
+			front_write_reg_v4(0x20,
+				((front_read_reg_v4(0x20) & ~0xff)
+				| (nco_rate & 0xff)));
 		}
 
 		dvbc_set_ch(&demod_status, /*&demod_i2c, */&param_j83b);
 
 		if (is_ic_ver(IC_VER_TL1) || is_ic_ver(IC_VER_TM2)) {
 			qam_write_reg(0x7, 0x10f33);
+
+			/*don't bypass afifo,can run demod at 250M
+			 *for timeshift mosaic issue
+			 */
+			if (is_ic_ver(IC_VER_TM2))
+				qam_write_reg(0x87,
+					qam_read_reg(0x87) & 0xfffffffe);
+
 			set_j83b_filter_reg_v4();
 			qam_write_reg(0x12, 0x50e1000);
 			qam_write_reg(0x30, 0x41f2f69);
@@ -1720,7 +1743,7 @@ static int gxtv_demod_atsc_set_frontend(struct dvb_frontend *fe)
 			else
 				atsc_write_reg_v4(ATSC_DEMOD_REG_0X56, 0x0);
 
-			if (demod_status.adc_freq == Adc_Clk_24M) {
+			if (demod_status.adc_freq == ADC_CLK_24M) {
 				atsc_write_reg_v4(ATSC_DEMOD_REG_0X54,
 					0x1aaaaa);
 
@@ -1731,7 +1754,8 @@ static int gxtv_demod_atsc_set_frontend(struct dvb_frontend *fe)
 					0x16e3600);
 			}
 
-			atsc_write_reg_v4(0x12, 0x18);//for timeshift mosaic
+			/*for timeshift mosaic issue*/
+			atsc_write_reg_v4(0x12, 0x18);
 			Val_0x20.bits = atsc_read_reg_v4(ATSC_CNTR_REG_0X20);
 			Val_0x20.b.cpu_rst = 1;
 			atsc_write_reg_v4(ATSC_CNTR_REG_0X20, Val_0x20.bits);
@@ -2161,7 +2185,7 @@ int Gxtv_Demod_Atsc_Init(void/*struct aml_fe_dev *dev*/)
 	memset(&demod_status, 0, sizeof(demod_status));
 	/* 0 -DVBC, 1-DVBT, ISDBT, 2-ATSC*/
 	demod_status.dvb_mode = Gxtv_Atsc;
-	sys.adc_clk = Adc_Clk_24M;    /*Adc_Clk_26M;*/
+	sys.adc_clk = ADC_CLK_24M;    /*Adc_Clk_26M;*/
 	if (is_ic_ver(IC_VER_TL1) || is_ic_ver(IC_VER_TM2))
 		sys.demod_clk = Demod_Clk_250M;
 	else
@@ -2529,6 +2553,9 @@ static int gxtv_demod_dtmb_set_frontend(struct dvb_frontend *fe)
 	struct aml_demod_dtmb param;
 	int times;
 
+	if (!demod_thread)
+		return 0;
+
 	times = 2;
 	PR_DBG("gxtv_demod_dtmb_set_frontend,freq is %d\n", c->frequency);
 	memset(&param, 0, sizeof(param));
@@ -2573,10 +2600,10 @@ int Gxtv_Demod_Dtmb_Init(struct amldtvdemod_device_s *dev)
 			sys.adc_clk = Adc_Clk_25M;
 			sys.demod_clk = Demod_Clk_225M;
 		} else if (is_ic_ver(IC_VER_TL1) || is_ic_ver(IC_VER_TM2)) {
-			sys.adc_clk = Adc_Clk_24M;
+			sys.adc_clk = ADC_CLK_24M;
 			sys.demod_clk = Demod_Clk_250M;
 		} else {
-			sys.adc_clk = Adc_Clk_24M;
+			sys.adc_clk = ADC_CLK_24M;
 			sys.demod_clk = Demod_Clk_225M;
 		}
 	} else {
@@ -2584,7 +2611,7 @@ int Gxtv_Demod_Dtmb_Init(struct amldtvdemod_device_s *dev)
 		return -1;
 	}
 
-	demod_status.ch_if = Si2176_5M_If;
+	demod_status.ch_if = SI2176_5M_IF;
 	demod_status.tmp = Adc_mode;
 	demod_status.spectrum = dev->spectrum;
 	/*demod_set_sys(&demod_status, &i2c, &sys);*/
@@ -2973,7 +3000,7 @@ static bool enter_mode(enum aml_fe_n_mode_t mode)
 
 	/*-------------------*/
 	/* must enable the adc ref signal for demod, */
-	/*vdac_enable(1, 0x2);*/
+	/*vdac_enable(1, VDAC_MODULE_DTV_DEMOD);*/
 	dtvdemod_vdac_enable(1);/*on*/
 	dtvdd_devp->en_detect = 0;/**/
 	dtvdd_devp->n_mode = mode;
@@ -3090,7 +3117,7 @@ static int leave_mode(enum aml_fe_n_mode_t mode)
 	adc_set_pll_cntl(0, 0x8, NULL);
 	demod_mode_para = UNKNOWN;
 	/* should disable the adc ref signal for demod */
-	/*vdac_enable(0, 0x2);*/
+	/*vdac_enable(0, VDAC_MODULE_DTV_DEMOD);*/
 	dtvdemod_vdac_enable(0);/*off*/
 	dtvdemod_set_agc_pinmux(0);
 	msleep(200);
@@ -3605,10 +3632,10 @@ static void dtvdemod_vdac_enable(bool on)
 {
 	if (on) {
 		vdac_clk_gate_ctrl(1);
-		vdac_enable(1, 0x02);
+		vdac_enable(1, VDAC_MODULE_DTV_DEMOD);
 	} else {
 		vdac_clk_gate_ctrl(0);
-		vdac_enable(0, 0x02);
+		vdac_enable(0, VDAC_MODULE_DTV_DEMOD);
 	}
 }
 
@@ -4886,7 +4913,7 @@ static struct dvb_frontend_ops aml_dtvdm_tm2_ops = {
 
 };
 
-struct dvb_frontend *aml_dtvdm_attach(const struct amlfe_exp_config *config)
+struct dvb_frontend *aml_dtvdm_attach(const struct demod_config *config)
 {
 	int ic_version = get_ic_ver();
 

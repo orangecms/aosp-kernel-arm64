@@ -1,3 +1,18 @@
+/*
+ * Copyright (C) 2017 Amlogic, Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ */
+
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -54,7 +69,7 @@ static int ad82584f_set_eq_drc(struct snd_soc_codec *codec);
 /* Power-up register defaults */
 static const
 struct reg_default ad82584f_reg_defaults[AD82584F_REGISTER_COUNT] = {
-	{0x00, 0x00},//##State_Control_1
+	{0x00, 0x04},//##State_Control_1
 	{0x01, 0x04},//##State_Control_2
 	{0x02, 0x30},//##State_Control_3
 	{0x03, 0x4e},//##Master_volume_control
@@ -192,7 +207,7 @@ struct reg_default ad82584f_reg_defaults[AD82584F_REGISTER_COUNT] = {
 };
 
 static const int m_reg_tab[AD82584F_REGISTER_COUNT][2] = {
-	{0x00, 0x00},//##State_Control_1
+	{0x00, 0x04},//##State_Control_1
 	{0x01, 0x04},//##State_Control_2
 	{0x02, 0x30},//##State_Control_3
 	{0x03, 0x4e},//##Master_volume_control
@@ -758,45 +773,43 @@ static int ad82584f_set_eq_drc(struct snd_soc_codec *codec)
 	return 0;
 }
 
-static int reset_ad82584f_GPIO(struct snd_soc_codec *codec)
+static int ad82584f_GPIO_enable(struct snd_soc_codec *codec, bool enable)
 {
 	struct ad82584f_priv *ad82584f = snd_soc_codec_get_drvdata(codec);
 	struct ad82584f_platform_data *pdata = ad82584f->pdata;
-	int ret = 0;
 
 	if (pdata->reset_pin < 0)
 		return 0;
 
-	ret = devm_gpio_request_one(codec->dev, pdata->reset_pin,
-					    GPIOF_OUT_INIT_LOW,
-					    "ad82584f-reset-pin");
-	if (ret < 0)
-		return -1;
-
-	gpio_direction_output(pdata->reset_pin, GPIOF_OUT_INIT_LOW);
-	usleep_range(10 * 1000, 11 * 1000);
-	gpio_direction_output(pdata->reset_pin, GPIOF_OUT_INIT_HIGH);
-	usleep_range(1 * 1000, 2 * 1000);
-
-	return 0;
-}
+	if (enable == true) {
 #if 0
-static int reset_ad82584f(struct snd_soc_codec *codec)
-{
-	struct ad82584f_priv *ad82584f = snd_soc_codec_get_drvdata(codec);
-	struct ad82584f_platform_data *pdata = ad82584f->pdata;
+		int ret;
 
-	if (pdata->reset_pin < 0)
-		return 0;
-
-	gpio_direction_output(pdata->reset_pin, GPIOF_OUT_INIT_LOW);
-	mdelay(10);
-	gpio_direction_output(pdata->reset_pin, GPIOF_OUT_INIT_HIGH);
-	mdelay(15);
+		ret = devm_gpio_request_one(codec->dev, pdata->reset_pin,
+						GPIOF_OUT_INIT_LOW,
+						"ad82584f-reset-pin");
+		if (ret < 0) {
+			dev_err(codec->dev, "ad82584f get gpio error!\n");
+			return -1;
+		}
+#endif
+		gpio_direction_output(pdata->reset_pin, GPIOF_OUT_INIT_LOW);
+		usleep_range(10 * 1000, 11 * 1000);
+		gpio_direction_output(pdata->reset_pin, GPIOF_OUT_INIT_HIGH);
+		dev_info(codec->dev, "ad82584f start status = %d\n",
+			gpio_get_value(pdata->reset_pin));
+		usleep_range(1 * 1000, 2 * 1000);
+	} else {
+		/*gpio_direction_output(pdata->reset_pin, GPIOF_OUT_INIT_LOW);*/
+		gpio_set_value(pdata->reset_pin, GPIOF_OUT_INIT_LOW);
+		dev_info(codec->dev, "ad82584f stop status = %d\n",
+			gpio_get_value(pdata->reset_pin));
+		/*devm_gpio_free(codec->dev, pdata->reset_pin);*/
+	}
 
 	return 0;
 }
-#endif
+
 static int ad82584f_reg_init(struct snd_soc_codec *codec)
 {
 	int i = 0;
@@ -811,7 +824,7 @@ static int ad82584f_init(struct snd_soc_codec *codec)
 {
 	struct ad82584f_priv *ad82584f = snd_soc_codec_get_drvdata(codec);
 
-	reset_ad82584f_GPIO(codec);
+	ad82584f_GPIO_enable(codec, true);
 
 	dev_info(codec->dev, "ad82584f_init!\n");
 
@@ -841,16 +854,29 @@ static int ad82584f_init(struct snd_soc_codec *codec)
 
 static int ad82584f_probe(struct snd_soc_codec *codec)
 {
+	struct ad82584f_priv *ad82584f = snd_soc_codec_get_drvdata(codec);
+	struct ad82584f_platform_data *pdata = ad82584f->pdata;
+	int ret = 0;
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
-	struct ad82584f_priv *ad82584f = snd_soc_codec_get_drvdata(codec);
-
 	ad82584f->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN;
 	ad82584f->early_suspend.suspend = ad82584f_early_suspend;
 	ad82584f->early_suspend.resume = ad82584f_late_resume;
 	ad82584f->early_suspend.param = codec;
 	register_early_suspend(&(ad82584f->early_suspend));
 #endif
+
+	if (pdata->reset_pin > 0) {
+		ret = devm_gpio_request_one(codec->dev, pdata->reset_pin,
+						GPIOF_OUT_INIT_LOW,
+						"ad82584f-reset-pin");
+
+		if (ret < 0) {
+			dev_err(codec->dev, "ad82584f get gpio error!\n");
+			return -1;
+		}
+	}
+
 	ad82584f_init(codec);
 
 	return 0;
@@ -858,11 +884,14 @@ static int ad82584f_probe(struct snd_soc_codec *codec)
 
 static int ad82584f_remove(struct snd_soc_codec *codec)
 {
-#ifdef CONFIG_HAS_EARLYSUSPEND
 	struct ad82584f_priv *ad82584f = snd_soc_codec_get_drvdata(codec);
+	struct ad82584f_platform_data *pdata = ad82584f->pdata;
 
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	unregister_early_suspend(&(ad82584f->early_suspend));
 #endif
+
+	devm_gpio_free(codec->dev, pdata->reset_pin);
 	return 0;
 }
 
@@ -881,6 +910,7 @@ static int ad82584f_suspend(struct snd_soc_codec *codec)
 
 	ad82584f_set_bias_level(codec, SND_SOC_BIAS_OFF);
 
+	ad82584f_GPIO_enable(codec, false);
 	return 0;
 }
 

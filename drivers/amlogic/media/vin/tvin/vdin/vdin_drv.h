@@ -36,6 +36,8 @@
 #include <linux/amlogic/media/vfm/vframe_receiver.h>
 #include <linux/amlogic/media/vfm/vframe_provider.h>
 #include <linux/amlogic/media/frame_provider/tvin/tvin_v4l2.h>
+#include <linux/amlogic/media/video_sink/video_signal_notify.h>
+#include <linux/amlogic/media/amvecm/amvecm.h>
 #ifdef CONFIG_AMLOGIC_MEDIA_RDMA
 #include <linux/amlogic/media/rdma/rdma_mgr.h>
 #endif
@@ -48,10 +50,58 @@
 /* Ref.2019/04/25: tl1 vdin0 afbce dynamically switch support,
  *                 vpp also should support this function
  */
-#define VDIN_VER "Ref.2019/05/14"
+#define VDIN_VER "ver:2020-1026: support secure mode for screen cap"
 
 /*the counter of vdin*/
 #define VDIN_MAX_DEVS			2
+
+enum vdin_hw_ver_e {
+	VDIN_HW_ORG = 0,
+	VDIN_HW_SM1,
+	VDIN_HW_TL1,
+	/*
+	 * tm2 vdin0/vdin1 all support upto 40k
+	 */
+	VDIN_HW_TM2,
+	VDIN_HW_TM2_B,
+	/*
+	 * sc2, sm1 vdin0 upto 4k, vdin1 upto 1080P (write)
+	 * no afbce
+	 */
+	VDIN_HW_SC2,
+};
+
+/*addr for verify chip*/
+#define K_FORCE_HV_SHRINK	0
+
+enum vdin_irq_flg_e {
+	VDIN_IRQ_FLG_NO_END = 1,
+	VDIN_IRQ_FLG_IRQ_STOP = 2,
+	VDIN_IRQ_FLG_FAKE_IRQ = 3,
+	VDIN_IRQ_FLG_DROP_FRAME = 4,
+	VDIN_IRQ_FLG_DV_CHK_SUM_ERR = 5,
+	VDIN_IRQ_FLG_CYCLE_CHK,
+	VDIN_IRQ_FLG_SIG_NOT_STABLE,
+	VDIN_IRQ_FLG_FMT_TRANS_CHG,
+	VDIN_IRQ_FLG_CSC_CHG,
+	VDIN_IRQ_FLG_BUFF_SKIP, /* 10 */
+	VDIN_IRQ_FLG_IGNORE_FRAME,
+	VDIN_IRQ_FLG_SKIP_FRAME,
+	VDIN_IRQ_FLG_GM_DV_CHK_SUM_ERR,
+	VDIN_IRQ_FLG_NO_WR_FE,
+	VDIN_IRQ_FLG_NO_NEXT_FE, /* 15 */
+	VDIN_IRQ_FLG_SECURE_MD,
+};
+
+/* for config hw function support */
+struct match_data_s {
+	char *name;
+	enum vdin_hw_ver_e hw_ver;
+	bool de_tunnel_tunnel;
+	/* tm2 verb :444 de-tunnel and wr mif 12 bit mode*/
+	bool ipt444_to_422_12bit;
+};
+
 /* #define VDIN_CRYSTAL               24000000 */
 /* #define VDIN_MEAS_CLK              50000000 */
 /* values of vdin_dev_t.flags */
@@ -82,18 +132,22 @@
 #define VDIN_FLAG_V4L2_DEBUG            0x00020000
 /*flag for isr req&free*/
 #define VDIN_FLAG_ISR_REQ               0x00040000
+#define VDIN_FLAG_ISR_EN		0x00100000
+
+/* flag for rdma done in isr*/
+#define VDIN_FLAG_RDMA_DONE             0x00080000
+
 /*values of vdin isr bypass check flag */
 #define VDIN_BYPASS_STOP_CHECK          0x00000001
 #define VDIN_BYPASS_CYC_CHECK           0x00000002
 #define VDIN_BYPASS_VGA_CHECK           0x00000008
-#define VDIN_CANVAS_MAX_CNT				9
 
 /*values of vdin game mode process flag */
 /*enable*/
 #define VDIN_GAME_MODE_0                (1 << 0)
-/*delay 1 frame*/
+/*delay 1 frame, vdin have one frame buffer delay*/
 #define VDIN_GAME_MODE_1                (1 << 1)
-/*delay 2 frame*/
+/*delay 2 frame write, read at same buffer*/
 #define VDIN_GAME_MODE_2                (1 << 2)
 /*when phase lock, will switch 2 to 1*/
 #define VDIN_GAME_MODE_SWITCH_EN        (1 << 3)
@@ -105,13 +159,33 @@
 #define RDMA_TABLE_SIZE (PAGE_SIZE>>3)
 /* #define VDIN_DEBUG */
 
+#define IS_HDMI_SRC(src)	\
+		({typeof(src) src_ = src; \
+		 (((src_) >= TVIN_PORT_HDMI0) && \
+		 ((src_) <= TVIN_PORT_HDMI7)); })
+
+#define IS_CVBS_SRC(src)	\
+		({typeof(src) src_ = src; \
+		 (((src_) >= TVIN_PORT_CVBS0) && \
+		 ((src_) <= TVIN_PORT_CVBS3)); })
+
+#define H_SHRINK_TIMES_4k	4
+#define V_SHRINK_TIMES_4k	4
+#define H_SHRINK_TIMES_1080	2
+#define V_SHRINK_TIMES_1080	2
+
 /*vdin write mem color-depth support*/
-#define VDIN_WR_COLOR_DEPTH_8BIT	1
-#define VDIN_WR_COLOR_DEPTH_9BIT	(1 << 1)
-#define VDIN_WR_COLOR_DEPTH_10BIT	(1 << 2)
-#define VDIN_WR_COLOR_DEPTH_12BIT	(1 << 3)
-/*TXL new add*/
-#define VDIN_WR_COLOR_DEPTH_10BIT_FULL_PCAK_MODE	(1 << 4)
+enum VDIN_WR_COLOR_DEPTHe {
+	VDIN_WR_COLOR_DEPTH_8BIT = 0x01,
+	VDIN_WR_COLOR_DEPTH_9BIT = 0x02,
+	VDIN_WR_COLOR_DEPTH_10BIT = 0x04,
+	VDIN_WR_COLOR_DEPTH_12BIT = 0x08,
+	/*TXL new add*/
+	VDIN_WR_COLOR_DEPTH_10BIT_FULL_PCAK_MODE = 0x10,
+};
+
+#define VDIN_422_FULL_PK_EN			1
+#define VDIN_422_FULL_PK_DIS			0
 
 /* vdin afbce flag */
 #define VDIN_AFBCE_EN                   (1 << 0)
@@ -120,6 +194,80 @@
 #define VDIN_AFBCE_EN_1080P             (1 << 5)
 #define VDIN_AFBCE_EN_720P              (1 << 6)
 #define VDIN_AFBCE_EN_SMALL             (1 << 7)
+
+enum COLOR_DEEPS_CFGe {
+	COLOR_DEEPS_AUTO = 0,
+	COLOR_DEEPS_8BIT = 8,
+	COLOR_DEEPS_10BIT = 10,
+	COLOR_DEEPS_12BIT = 12,
+	COLOR_DEEPS_MANUAL = 0x100,
+};
+
+enum vdin_color_deeps_e {
+	VDIN_COLOR_DEEPS_8BIT = 8,
+	VDIN_COLOR_DEEPS_9BIT = 9,
+	VDIN_COLOR_DEEPS_10BIT = 10,
+	VDIN_COLOR_DEEPS_12BIT = 12,
+};
+
+enum vdin_vf_put_md {
+	VDIN_VF_PUT,
+	VDIN_VF_RECYCLE,
+};
+
+/* *********************************************************************** */
+/* *** enum definitions ********************************************* */
+/* *********************************************************************** */
+/*
+ *YUV601:  SDTV BT.601            YCbCr (16~235, 16~240, 16~240)
+ *YUV601F: SDTV BT.601 Full_Range YCbCr ( 0~255,  0~255,  0~255)
+ *YUV709:  HDTV BT.709            YCbCr (16~235, 16~240, 16~240)
+ *YUV709F: HDTV BT.709 Full_Range YCbCr ( 0~255,  0~255,  0~255)
+ *RGBS:                       StudioRGB (16~235, 16~235, 16~235)
+ *RGB:                              RGB ( 0~255,  0~255,  0~255)
+ */
+enum vdin_matrix_csc_e {
+	VDIN_MATRIX_NULL = 0,
+	VDIN_MATRIX_XXX_YUV601_BLACK,/*1*/
+	VDIN_MATRIX_RGB_YUV601,
+	VDIN_MATRIX_GBR_YUV601,
+	VDIN_MATRIX_BRG_YUV601,
+	VDIN_MATRIX_YUV601_RGB,/*5*/
+	VDIN_MATRIX_YUV601_GBR,
+	VDIN_MATRIX_YUV601_BRG,
+	VDIN_MATRIX_RGB_YUV601F,
+	VDIN_MATRIX_YUV601F_RGB,/*9*/
+	VDIN_MATRIX_RGBS_YUV601,/*10*/
+	VDIN_MATRIX_YUV601_RGBS,
+	VDIN_MATRIX_RGBS_YUV601F,
+	VDIN_MATRIX_YUV601F_RGBS,
+	VDIN_MATRIX_YUV601F_YUV601,
+	VDIN_MATRIX_YUV601_YUV601F,/*15*/
+	VDIN_MATRIX_RGB_YUV709,
+	VDIN_MATRIX_YUV709_RGB,
+	VDIN_MATRIX_YUV709_GBR,
+	VDIN_MATRIX_YUV709_BRG,
+	VDIN_MATRIX_RGB_YUV709F,/*20*/
+	VDIN_MATRIX_YUV709F_RGB,
+	VDIN_MATRIX_RGBS_YUV709,
+	VDIN_MATRIX_YUV709_RGBS,
+	VDIN_MATRIX_RGBS_YUV709F,
+	VDIN_MATRIX_YUV709F_RGBS,/*25*/
+	VDIN_MATRIX_YUV709F_YUV709,
+	VDIN_MATRIX_YUV709_YUV709F,
+	VDIN_MATRIX_YUV601_YUV709,
+	VDIN_MATRIX_YUV709_YUV601,
+	VDIN_MATRIX_YUV601_YUV709F,/*30*/
+	VDIN_MATRIX_YUV709F_YUV601,
+	VDIN_MATRIX_YUV601F_YUV709,
+	VDIN_MATRIX_YUV709_YUV601F,
+	VDIN_MATRIX_YUV601F_YUV709F,
+	VDIN_MATRIX_YUV709F_YUV601F,/*35*/
+	VDIN_MATRIX_RGBS_RGB,
+	VDIN_MATRIX_RGB_RGBS,
+	VDIN_MATRIX_RGB2020_YUV2020,
+	VDIN_MATRIX_YUV2020F_YUV2020,
+};
 
 static inline const char *vdin_fmt_convert_str(
 		enum vdin_format_convert_e fmt_cvt)
@@ -161,6 +309,7 @@ static inline const char *vdin_fmt_convert_str(
 	}
 }
 
+/* only for keystone use begin */
 struct vdin_set_canvas_s {
 	int fd;
 	int index;
@@ -175,6 +324,13 @@ struct vdin_set_canvas_addr_s {
 	struct sg_table *sgtable;
 };
 extern struct vdin_set_canvas_addr_s vdin_set_canvas_addr[VDIN_CANVAS_MAX_CNT];
+
+struct vdin_crc_info {
+	int index;
+	unsigned int crc;
+};
+
+/* only for keystone use end */
 
 /*******for debug **********/
 struct vdin_debug_s {
@@ -191,15 +347,20 @@ struct vdin_dv_s {
 	unsigned int dolby_input;
 	dma_addr_t dv_dma_paddr;
 	void *dv_dma_vaddr;
+	void *temp_meta_data;
 	unsigned int dv_flag_cnt;/*cnt for no dv input*/
 	bool dv_flag;
 	bool dv_config;
+	bool dv_path_idx;
 	bool dv_crc_check;/*0:fail;1:ok*/
+	unsigned int dv_mem_alloced;
+	struct tvin_dv_vsif_s dv_vsif;/*dolby vsi info*/
+	bool low_latency;
+	unsigned int chg_cnt;
+	unsigned int allm_chg_cnt;
 };
 
 struct vdin_afbce_s {
-	unsigned int  head_size;/*all head size*/
-	unsigned int  table_size;/*all table size*/
 	unsigned int  frame_head_size;/*1 frame head size*/
 	unsigned int  frame_table_size;/*1 frame table size*/
 	unsigned int  frame_body_size;/*1 frame body size*/
@@ -211,8 +372,11 @@ struct vdin_afbce_s {
 	unsigned long fm_table_paddr[VDIN_CANVAS_MAX_CNT];
 	/*every body head addr*/
 	unsigned long fm_body_paddr[VDIN_CANVAS_MAX_CNT];
-	//unsigned int cur_af;/*current afbce number*/
-	//unsigned int last_af;/*last afbce number*/
+};
+
+struct vdin_event_info {
+	/*enum tvin_sg_chg_flg*/
+	u32 event_sts;
 };
 
 struct vdin_dev_s {
@@ -222,16 +386,21 @@ struct vdin_dev_s {
 	struct tvin_format_s *fmt_info_p;
 	struct vf_pool *vfp;
 	struct tvin_frontend_s *frontend;
+	struct tvin_frontend_s	vdin_frontend;
 	struct tvin_sig_property_s pre_prop;
 	struct tvin_sig_property_s prop;
 	struct vframe_provider_s vprov;
 	struct vdin_dv_s dv;
 	struct delayed_work vlock_dwork;
 	struct vdin_afbce_s *afbce_info;
+	/*vdin event*/
+	struct vdin_event_info event_info;
+	struct extcon_dev *extcon_event;
+	struct delayed_work event_dwork;
 
 	 /* 0:from gpio A,1:from csi2 , 2:gpio B*/
 	enum bt_path_e bt_path;
-
+	const struct match_data_s *dtdata;
 	struct timer_list timer;
 	spinlock_t isr_lock;
 	spinlock_t hist_lock;
@@ -241,15 +410,17 @@ struct vdin_dev_s {
 
 	struct vdin_debug_s debug;
 	enum vdin_format_convert_e format_convert;
-	unsigned int source_bitdepth;
-
+	enum vdin_color_deeps_e source_bitdepth;
+	enum vdin_matrix_csc_e csc_idx;
 	struct vf_entry *curr_wr_vfe;
 	struct vf_entry *last_wr_vfe;
 	unsigned int curr_field_type;
+	unsigned int curr_dv_flag;
 
 	char name[15];
 	/* bit0 TVIN_PARM_FLAG_CAP bit31: TVIN_PARM_FLAG_WORK_ON */
 	unsigned int flags;
+	unsigned int flags_isr;
 	unsigned int index;
 	unsigned int vdin_max_pixelclk;
 
@@ -257,11 +428,25 @@ struct vdin_dev_s {
 	unsigned int mem_size;
 	unsigned long vfmem_start[VDIN_CANVAS_MAX_CNT];
 	struct page *vfvenc_pages[VDIN_CANVAS_MAX_CNT];
+
+	/* save secure handle */
+	unsigned int secure_handle;
+	bool secure_en;
+	bool mem_protected;
 	unsigned int vfmem_size;
+	unsigned int vfmem_size_small;/* double write use */
+	unsigned int frame_size;
 	unsigned int vfmem_max_cnt;
+	unsigned int frame_buff_num;
 
 	unsigned int h_active;
 	unsigned int v_active;
+	unsigned int h_shrink_out;/* double write use */
+	unsigned int v_shrink_out;/* double write use */
+	unsigned int h_shrink_times;/* double write use */
+	unsigned int v_shrink_times;/* double write use */
+	unsigned int h_active_org;/*vdin scaler in*/
+	unsigned int v_active_org;/*vdin scaler in*/
 	unsigned int canvas_h;
 	unsigned int canvas_w;
 	unsigned int canvas_active_w;
@@ -275,17 +460,27 @@ struct vdin_dev_s {
 
 	unsigned int irq;
 	unsigned int rdma_irq;
+	unsigned int vpu_crash_irq;
+	unsigned int wr_done_irq;
 	char irq_name[12];
+	char vpu_crash_irq_name[20];
+	char wr_done_irq_name[20];
 	/* address offset(vdin0/vdin1/...) */
 	unsigned int addr_offset;
 
 	unsigned int unstable_flag;
-	unsigned int abnormal_cnt;
+	unsigned int wr_done_abnormal_cnt;
 	unsigned int stamp;
 	unsigned int hcnt64;
 	unsigned int cycle;
 	unsigned int start_time;/* ms vdin start time */
 	int rdma_handle;
+	/*for unreliable vsync interrupt check*/
+	unsigned long long vs_time_stamp;
+	unsigned int unreliable_vs_cnt;
+	unsigned int unreliable_vs_cnt_pre;
+	unsigned int unreliable_vs_idx;
+	unsigned int unreliable_vs_time[10];
 
 	bool cma_config_en;
 	/*cma_config_flag:
@@ -316,19 +511,19 @@ struct vdin_dev_s {
 	 *bit3:support 12bit
 	 *bit4:support yuv422 10bit full pack mode (from txl new add)
 	 */
-	unsigned int color_depth_support;
+	enum VDIN_WR_COLOR_DEPTHe color_depth_support;
 	/*color depth config
 	 *0:auto config as frontend
 	 *8:force config as 8bit
 	 *10:force config as 10bit
 	 *12:force config as 12bit
 	 */
-	unsigned int color_depth_config;
+	enum COLOR_DEEPS_CFGe color_depth_config;
 	/* new add from txl:color depth mode for 10bit
 	 *1: full pack mode;config 10bit as 10bit
 	 *0: config 10bit as 12bit
 	 */
-	unsigned int color_depth_mode;
+	unsigned int full_pack;
 	/* output_color_depth:
 	 * when tv_input is 4k50hz_10bit or 4k60hz_10bit,
 	 * choose output color depth from dts
@@ -342,8 +537,6 @@ struct vdin_dev_s {
 	 *0:vdin out full range
 	 */
 	unsigned int color_range_mode;
-	/*auto detect av/atv input ratio*/
-	unsigned int auto_ratio_en;
 	/*
 	 *game_mode:
 	 *bit0:enable/disable
@@ -376,23 +569,37 @@ struct vdin_dev_s {
 	unsigned int keystone_vframe_ready;
 	struct vf_entry *keystone_entry[VDIN_CANVAS_MAX_CNT];
 	unsigned int canvas_config_mode;
-	bool	prehsc_en;
-	bool	vshrk_en;
-	bool	urgent_en;
+	bool prehsc_en;
+	bool vshrk_en;
+	bool urgent_en;
+	bool double_wr_cfg;
+	bool double_wr;
+	bool double_wr_10bit_sup;
 	bool black_bar_enable;
 	bool hist_bar_enable;
 	unsigned int ignore_frames;
-	unsigned int recycle_frames;
 	/*use frame rate to cal duraton*/
 	unsigned int use_frame_rate;
 	unsigned int irq_cnt;
+	unsigned int vpu_crash_cnt;
 	unsigned int frame_cnt;
+	unsigned int puted_frame_cnt;
 	unsigned int rdma_irq_cnt;
+	unsigned int wr_done_irq_cnt;
 	unsigned int vdin_irq_flag;
 	unsigned int vdin_reset_flag;
 	unsigned int vdin_dev_ssize;
 	wait_queue_head_t queue;
 	struct dentry *dbg_root;	/*dbg_fs*/
+
+	/*atv non-std signal,force drop the field if previous already dropped*/
+	unsigned int interlace_force_drop;
+	unsigned int frame_drop_num;
+	unsigned int skip_disp_md_check;
+	unsigned int vframe_wr_en;
+	unsigned int vframe_wr_en_pre;
+	unsigned int tx_fmt;
+	unsigned int vd1_fmt;
 };
 
 struct vdin_hist_s {
@@ -400,6 +607,7 @@ struct vdin_hist_s {
 	int width;
 	int height;
 	int ave;
+	unsigned short hist[64];
 };
 
 struct vdin_v4l2_param_s {
@@ -408,54 +616,61 @@ struct vdin_v4l2_param_s {
 	int fps;
 };
 
-extern unsigned int max_recycle_frame_cnt;
 extern unsigned int max_ignore_frame_cnt;
 extern unsigned int skip_frame_debug;
-
+extern unsigned int vdin_drop_cnt;
 extern unsigned int vdin0_afbce_debug_force;
+extern unsigned int dv_de_scramble;
 
-extern struct vframe_provider_s *vf_get_provider_by_name(
-		const char *provider_name);
 extern bool enable_reset;
 extern unsigned int dolby_size_byte;
 extern unsigned int dv_dbg_mask;
-extern char *vf_get_receiver_name(const char *provider_name);
-extern int start_tvin_service(int no, struct vdin_parm_s *para);
-extern int stop_tvin_service(int no);
-extern int vdin_reg_v4l2(struct vdin_v4l2_ops_s *v4l2_ops);
-extern void vdin_unreg_v4l2(void);
-extern int vdin_create_class_files(struct class *vdin_clsp);
-extern void vdin_remove_class_files(struct class *vdin_clsp);
-extern int vdin_create_device_files(struct device *dev);
-extern void vdin_remove_device_files(struct device *dev);
-extern int vdin_open_fe(enum tvin_port_e port, int index,
-		struct vdin_dev_s *devp);
-extern void vdin_close_fe(struct vdin_dev_s *devp);
-extern void vdin_start_dec(struct vdin_dev_s *devp);
-extern void vdin_stop_dec(struct vdin_dev_s *devp);
-extern irqreturn_t vdin_isr_simple(int irq, void *dev_id);
-extern irqreturn_t vdin_isr(int irq, void *dev_id);
-extern irqreturn_t vdin_v4l2_isr(int irq, void *dev_id);
-extern void LDIM_Initial(int pic_h, int pic_v, int BLK_Vnum,
-	int BLK_Hnum, int BackLit_mode, int ldim_bl_en, int ldim_hvcnt_bypass);
-extern void ldim_get_matrix(int *data, int reg_sel);
-extern void ldim_set_matrix(int *data, int reg_sel);
-extern void tvafe_snow_config(unsigned int onoff);
-extern void tvafe_snow_config_clamp(unsigned int onoff);
-extern void vdin_vf_reg(struct vdin_dev_s *devp);
-extern void vdin_vf_unreg(struct vdin_dev_s *devp);
-extern void vdin_pause_dec(struct vdin_dev_s *devp);
-extern void vdin_resume_dec(struct vdin_dev_s *devp);
-extern bool is_dolby_vision_enable(void);
+extern u32 vdin_cfg_444_to_422_wmif_en;
+extern unsigned int vdin_isr_monitor;
+extern unsigned int vdin_get_prop_in_vs_en;
+extern unsigned int vdin_prop_monitor;
+extern unsigned int vdin_get_prop_in_fe_en;
+extern struct vdin_hist_s vdin1_hist;
 
-extern void vdin_debugfs_init(struct vdin_dev_s *vdevp);
-extern void vdin_debugfs_exit(struct vdin_dev_s *vdevp);
+struct vframe_provider_s *vf_get_provider_by_name(
+		const char *provider_name);
+char *vf_get_receiver_name(const char *provider_name);
+int start_tvin_service(int no, struct vdin_parm_s *para);
+int stop_tvin_service(int no);
+int vdin_reg_v4l2(struct vdin_v4l2_ops_s *v4l2_ops);
+void vdin_unreg_v4l2(void);
+int vdin_create_class_files(struct class *vdin_clsp);
+void vdin_remove_class_files(struct class *vdin_clsp);
+int vdin_create_debug_files(struct device *dev);
+void vdin_remove_debug_files(struct device *dev);
+int vdin_open_fe(enum tvin_port_e port, int index,
+		 struct vdin_dev_s *devp);
+void vdin_close_fe(struct vdin_dev_s *devp);
+void vdin_start_dec(struct vdin_dev_s *devp);
+void vdin_stop_dec(struct vdin_dev_s *devp);
+irqreturn_t vdin_isr_simple(int irq, void *dev_id);
+irqreturn_t vdin_isr(int irq, void *dev_id);
+irqreturn_t vdin_v4l2_isr(int irq, void *dev_id);
+void ldim_get_matrix(int *data, int reg_sel);
+void ldim_set_matrix(int *data, int reg_sel);
+void tvafe_snow_config(unsigned int onoff);
+void tvafe_snow_config_clamp(unsigned int onoff);
+void vdin_vf_reg(struct vdin_dev_s *devp);
+void vdin_vf_unreg(struct vdin_dev_s *devp);
+void vdin_pause_dec(struct vdin_dev_s *devp);
+void vdin_resume_dec(struct vdin_dev_s *devp);
+bool is_dolby_vision_enable(void);
 
-extern bool vlock_get_phlock_flag(void);
+void vdin_debugfs_init(struct vdin_dev_s *vdevp);
+void vdin_debugfs_exit(struct vdin_dev_s *vdevp);
+
+bool vlock_get_phlock_flag(void);
+bool vlock_get_vlock_flag(void);
 u32 vlock_get_phase_en(void);
 
-extern struct vdin_dev_s *vdin_get_dev(unsigned int index);
-extern void vdin_mif_config_init(struct vdin_dev_s *devp);
+struct vdin_dev_s *vdin_get_dev(unsigned int index);
+void vdin_mif_config_init(struct vdin_dev_s *devp);
+void vdin_drop_frame_info(struct vdin_dev_s *devp, char *info);
 
 #endif /* __TVIN_VDIN_DRV_H */
 

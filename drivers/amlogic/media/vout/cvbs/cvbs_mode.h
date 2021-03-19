@@ -23,9 +23,8 @@ enum cvbs_mode_e {
 	MODE_576CVBS,
 	MODE_PAL_M,
 	MODE_PAL_N,
+	MODE_NTSC_M,
 	MODE_MAX,
 };
-
-extern enum cvbs_mode_e get_local_cvbs_mode(void);
 
 #endif

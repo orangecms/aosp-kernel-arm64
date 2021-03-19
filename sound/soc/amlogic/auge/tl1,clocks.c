@@ -22,8 +22,6 @@
 #include "audio_clks.h"
 #include "regs.h"
 
-static spinlock_t aclk_lock;
-
 static const char *const mclk_parent_names[] = {
 	"mpll0", "mpll1", "mpll2", "mpll3", "hifi_pll",
 	"fclk_div3", "fclk_div4", "fclk_div5"};
@@ -223,9 +221,9 @@ CLOCK_COM_DIV(resample_b, AUD_ADDR_OFFSET(EE_AUDIO_CLK_RESAMPLEB_CTRL), 0, 8);
 CLOCK_COM_GATE(resample_b, AUD_ADDR_OFFSET(EE_AUDIO_CLK_RESAMPLEB_CTRL), 31);
 /* spdifin_lb, div is a fake */
 CLOCK_COM_MUX(spdifin_lb,
-	AUD_ADDR_OFFSET(EE_AUDIO_CLK_SPDIFOUT_B_CTRL), 0x1, 30);
-CLOCK_COM_DIV(spdifin_lb, AUD_ADDR_OFFSET(EE_AUDIO_CLK_SPDIFOUT_B_CTRL), 0, 29);
-CLOCK_COM_GATE(spdifin_lb, AUD_ADDR_OFFSET(EE_AUDIO_CLK_SPDIFOUT_B_CTRL), 31);
+	AUD_ADDR_OFFSET(EE_AUDIO_CLK_SPDIFIN_LB_CTRL), 0x1, 30);
+CLOCK_COM_DIV(spdifin_lb, AUD_ADDR_OFFSET(EE_AUDIO_CLK_SPDIFIN_LB_CTRL), 29, 1);
+CLOCK_COM_GATE(spdifin_lb, AUD_ADDR_OFFSET(EE_AUDIO_CLK_SPDIFIN_LB_CTRL), 31);
 /* audio eqdrc  */
 CLOCK_COM_MUX(eqdrc, AUD_ADDR_OFFSET(EE_AUDIO_CLK_EQDRC_CTRL0), 0x7, 24);
 CLOCK_COM_DIV(eqdrc, AUD_ADDR_OFFSET(EE_AUDIO_CLK_EQDRC_CTRL0), 0, 16);

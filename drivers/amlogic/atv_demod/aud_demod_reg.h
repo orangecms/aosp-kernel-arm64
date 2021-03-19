@@ -218,6 +218,11 @@
 #define CARRIER_MAG_REPORT         0x0f6
 #define BTSC_AB_REPORT             0x0f7
 #define AUDIO_MODE_REPORT          0x0f8
+
+#define NICAM_CTRL_ENABLE          0x103
+#define NICAM_DDC_ROLLOFF          0x110
+#define NICAM_DAGC1                0x115
+#define NICAM_EQ_ERR_MODE          0x17c
 #define NICAM_LEVEL_REPORT         0x1a3
 #define NICAM_MODE_REPORT          0x1a4
 
@@ -229,8 +234,8 @@
 #define ADDR_BTSC_BYPASS_CTRL      (BTSC_BYPASS_CTRL)
 #define ADDR_EXPANDER_SPECTRAL_ADJ (EXPANDER_SPEC_ADJ)
 #define ADDR_EXPANDER_GAIN_ADJ     (EXPANDER_GAIN_ADJ)
-#define ADDR_LMR_ADJ               (LMR_GAIN_ADJ)
-#define ADDR_SAP_ADJ               (SAP_GAIN_ADJ)
+#define ADDR_LMR_GAIN_ADJ          (LMR_GAIN_ADJ)
+#define ADDR_SAP_GAIN_ADJ          (SAP_GAIN_ADJ)
 #define ADDR_LPR_GAIN_ADJ          (LPR_GAIN_ADJ)
 #define ADDR_STEREO_THRESHOLD      (BTSC_STEREO_THD)
 #define ADDR_LPR_COMP_CTRL         (DELAY_COMP_CRTL)
@@ -357,6 +362,6 @@
 #define AUDIO_DEEM_75US             0
 #define AUDIO_DEEM_50US             1
 #define AUDIO_DEEM_J17              2
-
+#define AUDIO_DEEM_J17_2            3
 
 #endif /* __AUD_DEMOD_REG_H__ */

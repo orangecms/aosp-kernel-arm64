@@ -35,6 +35,9 @@
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/of_irq.h>
+#ifdef CONFIG_MTD_SPI_NOR
+#include <linux/mtd/spi-nor.h>
+#endif
 #include "spicc.h"
 
 /* #define CONFIG_SPICC_LOG */
@@ -103,6 +106,13 @@ struct spicc {
 	struct my_log *log;
 	int log_size;
 	int log_count;
+#endif
+#ifdef CONFIG_MTD_SPI_NOR
+	struct device *dev;
+	struct spi_nor *nor;
+	int nor_cs;
+	/* used by nor core */
+	struct mutex nor_lock;
 #endif
 };
 
@@ -339,7 +349,7 @@ static void spicc_set_clk(struct spicc *spicc, int speed)
 	sys_clk_rate = clk_get_rate(spicc->clk);
 
 	if (spicc_get_flag(spicc, FLAG_ENHANCE)) {
-		div = sys_clk_rate/speed;
+		div = DIV_ROUND_UP(sys_clk_rate, speed);
 		if (div < 2)
 			div = 2;
 		div = (div >> 1) - 1;
@@ -618,6 +628,9 @@ static int spicc_hw_xfer(struct spicc *spicc, u8 *txp, u8 *rxp, int len)
 	void __iomem *mem_base = spicc->regs;
 	int ret;
 
+	if (!len)
+		return 0;
+
 	spicc_reset_fifo(spicc);
 	setb(mem_base, CON_XCH, 0);
 	setb(mem_base, WAIT_CYCLES, 0);
@@ -726,6 +739,142 @@ void dirspi_stop(struct spi_device *spi)
 }
 EXPORT_SYMBOL(dirspi_stop);
 
+int dirspi_register_board_info(struct spi_board_info const *info,
+			       unsigned int n)
+{
+	return spi_register_board_info(info, n);
+}
+EXPORT_SYMBOL_GPL(dirspi_register_board_info);
+
+#ifdef CONFIG_MTD_SPI_NOR
+static int meson_snor_prep(struct spi_nor *nor, enum spi_nor_ops ops)
+{
+	struct spicc *spicc = nor->priv;
+
+	mutex_lock(&spicc->nor_lock);
+
+	return 0;
+}
+
+static void meson_snor_unprep(struct spi_nor *nor, enum spi_nor_ops ops)
+{
+	struct spicc *spicc = nor->priv;
+
+	mutex_unlock(&spicc->nor_lock);
+}
+
+static int meson_snor_read_reg(struct spi_nor *nor, u8 opcode,
+			       u8 *buf, int len)
+{
+	struct spicc *spicc = nor->priv;
+	int ret;
+
+	gpio_direction_output(spicc->nor_cs,  0);
+
+	ret = spicc_hw_xfer(spicc, &opcode, 0, 1);
+	if (!ret)
+		ret = spicc_hw_xfer(spicc, 0, buf, len);
+
+	gpio_direction_output(spicc->nor_cs,  1);
+
+	return ret;
+}
+
+ssize_t meson_snor_read(struct spi_nor *nor, loff_t from,
+			size_t len, u_char *read_buf)
+{
+	struct spicc *spicc = nor->priv;
+	u8 tx_buf[4];
+	int ret;
+
+	gpio_direction_output(spicc->nor_cs,  0);
+
+	tx_buf[0] = nor->read_opcode;
+	tx_buf[1] = (from >> 16) & 0xff;
+	tx_buf[2] = (from >> 8) & 0xff;
+	tx_buf[3] = from & 0xff;
+	ret = spicc_hw_xfer(spicc, tx_buf, 0, 4);
+	if (!ret)
+		ret = spicc_hw_xfer(spicc, 0, read_buf, len);
+
+	gpio_direction_output(spicc->nor_cs,  1);
+
+	return ret ? 0 : len;
+}
+
+static int meson_snor_write_reg(struct spi_nor *nor, u8 opcode,
+				u8 *buf, int len)
+{
+	struct spicc *spicc = nor->priv;
+	int ret;
+
+	gpio_direction_output(spicc->nor_cs,  0);
+
+	ret = spicc_hw_xfer(spicc, &opcode, 0, 1);
+	if (!ret)
+		ret = spicc_hw_xfer(spicc, buf, 0, len);
+
+	gpio_direction_output(spicc->nor_cs,  1);
+
+	return ret;
+}
+
+static ssize_t meson_snor_write(struct spi_nor *nor, loff_t to,
+				size_t len, const u_char *write_buf)
+{
+	struct spicc *spicc = nor->priv;
+	u8 tx_buf[4];
+	int ret;
+
+	gpio_direction_output(spicc->nor_cs,  0);
+
+	tx_buf[0] = nor->program_opcode;
+	tx_buf[1] = (to >> 16) & 0xff;
+	tx_buf[2] = (to >> 8) & 0xff;
+	tx_buf[3] = to & 0xff;
+	ret = spicc_hw_xfer(spicc, tx_buf, 0, 4);
+	if (!ret)
+		ret = spicc_hw_xfer(spicc, (u8 *)write_buf, 0, len);
+
+	gpio_direction_output(spicc->nor_cs,  1);
+
+	return ret ? 0 : len;
+}
+
+static struct spi_nor *meson_snor_init(struct spicc *spicc,
+				       struct device_node *np)
+{
+	struct device *dev = spicc->dev;
+	struct spi_nor *nor;
+	struct mtd_info *mtd;
+
+	nor = devm_kzalloc(dev, sizeof(*nor), GFP_KERNEL);
+	if (!nor)
+		return 0;
+
+	nor->dev = dev;
+	spi_nor_set_flash_node(nor, np);
+	nor->priv = spicc;
+	nor->prepare = meson_snor_prep;
+	nor->unprepare = meson_snor_unprep;
+	nor->read_reg = meson_snor_read_reg;
+	nor->write_reg = meson_snor_write_reg;
+	nor->read = meson_snor_read;
+	nor->write = meson_snor_write;
+	nor->erase = NULL;
+	mtd = &nor->mtd;
+	mtd->name = (np->name) ? np->name : "meson_snor";
+
+	if (!spi_nor_scan(nor, NULL, SPI_NOR_NORMAL)) {
+		if (!mtd_device_register(mtd, NULL, 0))
+			return nor;
+	}
+
+	devm_kfree(dev, nor);
+	return 0;
+}
+
+#endif /* end CONFIG_MTD_SPI_NOR */
 
 /* setting clock and pinmux here */
 static int spicc_setup(struct spi_device *spi)
@@ -1078,13 +1227,15 @@ static int of_spicc_get_data(
 		dev_err(&pdev->dev, "get clk fail\n");
 		return PTR_ERR(spicc->clk);
 	}
+	clk_prepare_enable(spicc->clk);
+	if (spicc->clk_rate)
+		clk_set_rate(spicc->clk, spicc->clk_rate);
+
 	spicc->hclk = devm_clk_get(&pdev->dev, "cts_spicc_hclk");
 	if (IS_ERR_OR_NULL(spicc->hclk))
 		dev_err(&pdev->dev, "get cts_spicc_hclk failed\n");
-	if (spicc->clk_rate) {
-		clk_set_rate(spicc->clk, spicc->clk_rate);
-		clk_prepare_enable(spicc->clk);
-	}
+	else
+		clk_prepare_enable(spicc->hclk);
 
 	if (spicc_get_flag(spicc, FLAG_ENHANCE)) {
 		err = of_property_read_u32(np, "enhance_dlyctl", &value);
@@ -1100,25 +1251,84 @@ static int spicc_probe(struct platform_device *pdev)
 	struct spi_master *master;
 	struct spicc *spicc;
 	int i, ret;
+#ifdef CONFIG_MTD_SPI_NOR
+	struct device_node *child, *np = pdev->dev.of_node;
+	int speed;
+#endif
 
 	WARN_ON(!pdev->dev.of_node);
-	master = spi_alloc_master(&pdev->dev, sizeof(*spicc));
-	if (IS_ERR_OR_NULL(master)) {
-		dev_err(&pdev->dev, "allocate spi master failed!\n");
+	spicc = devm_kzalloc(&pdev->dev, sizeof(*spicc), GFP_KERNEL);
+	if (!spicc)
 		return -ENOMEM;
-	}
-	spicc = spi_master_get_devdata(master);
-	spicc->master = master;
+
 	dev_set_drvdata(&pdev->dev, spicc);
 	ret = of_spicc_get_data(spicc, pdev);
 	if (ret) {
 		dev_err(&pdev->dev, "of error=%d\n", ret);
-		goto err;
+		goto err1;
 	}
 	spicc_hw_init(spicc);
 	spicc_log_init(spicc);
 	spicc_log(spicc, 0, 0, PROBE_BEGIN);
 
+	spin_lock_init(&spicc->lock);
+	init_completion(&spicc->completion);
+	if (spicc->irq) {
+		if (request_irq(spicc->irq, spicc_xfer_complete_isr,
+				IRQF_SHARED, "spicc", spicc)) {
+			dev_err(&pdev->dev, "request irq(%d) failed!\n",
+				spicc->irq);
+			spicc->irq = 0;
+		} else
+			disable_irq_nosync(spicc->irq);
+	}
+	spicc_log(spicc, &spicc->irq, 1, REQUEST_IRQ);
+
+#ifdef CONFIG_MTD_SPI_NOR
+	spicc->dev = &pdev->dev;
+	child = of_get_next_available_child(np, NULL);
+	if (child && of_device_is_compatible(child, "jedec,spi-nor")) {
+		if (of_gpio_named_count(np, "cs-gpios") != 1) {
+			dev_err(&pdev->dev, "nor: cs-gpios error\n");
+			ret = -EINVAL;
+			goto err1;
+		}
+		spicc->nor_cs = of_get_named_gpio(np, "cs-gpios", 0);
+		if (!gpio_is_valid(spicc->nor_cs)) {
+			dev_err(&pdev->dev, "nor: invalid cs-gpio\n");
+			ret = -EINVAL;
+			goto err1;
+		}
+
+		ret = gpio_request(spicc->nor_cs, dev_name(&pdev->dev));
+		if (ret) {
+			dev_err(&pdev->dev, "nor: request cs-gpio failed\n");
+			goto err1;
+		}
+		gpio_direction_output(spicc->nor_cs,  1);
+
+		ret = of_property_read_u32(child, "frequency", &speed);
+		if (!ret)
+			spicc_set_clk(spicc, speed);
+
+		mutex_init(&spicc->nor_lock);
+		spicc->nor = meson_snor_init(spicc, child);
+	}
+
+	if (spicc->nor)
+		return 0;
+
+	mutex_destroy(&spicc->nor_lock);
+	dev_warn(&pdev->dev, "no snor on spicc bus\n");
+#endif
+
+	master = spi_alloc_master(&pdev->dev, 0);
+	if (IS_ERR_OR_NULL(master)) {
+		dev_err(&pdev->dev, "allocate spi master failed!\n");
+		return -ENOMEM;
+	}
+	spi_master_set_devdata(master, spicc);
+	spicc->master = master;
 	master->dev.of_node = pdev->dev.of_node;
 	master->bus_num = spicc->device_id;
 	master->setup = spicc_setup;
@@ -1145,20 +1355,7 @@ static int spicc_probe(struct platform_device *pdev)
 		ret = -EBUSY;
 		goto err;
 	}
-	spin_lock_init(&spicc->lock);
 	INIT_LIST_HEAD(&spicc->msg_queue);
-
-	init_completion(&spicc->completion);
-	if (spicc->irq) {
-		if (request_irq(spicc->irq, spicc_xfer_complete_isr,
-				IRQF_SHARED, "spicc", spicc)) {
-			dev_err(&pdev->dev, "master %d request irq(%d) failed!\n",
-					master->bus_num, spicc->irq);
-			spicc->irq = 0;
-		} else
-			disable_irq_nosync(spicc->irq);
-	}
-	spicc_log(spicc, &spicc->irq, 1, REQUEST_IRQ);
 
 	/*setup class*/
 	spicc->cls.name = kzalloc(10, GFP_KERNEL);
@@ -1178,6 +1375,9 @@ static int spicc_probe(struct platform_device *pdev)
 	return ret;
 err:
 	spi_master_put(master);
+
+err1:
+	devm_kfree(&pdev->dev, spicc);
 	return ret;
 }
 
@@ -1189,6 +1389,9 @@ static int spicc_remove(struct platform_device *pdev)
 	spicc_log_exit(spicc);
 	spi_unregister_master(spicc->master);
 	destroy_workqueue(spicc->wq);
+#ifdef CONFIG_MTD_SPI_NOR
+	mutex_destroy(&spicc->nor_lock);
+#endif
 	if (spicc->pinctrl)
 		devm_pinctrl_put(spicc->pinctrl);
 	return 0;
@@ -1247,7 +1450,7 @@ static void __exit spicc_exit(void)
 	platform_driver_unregister(&spicc_driver);
 }
 
-subsys_initcall(spicc_init);
+module_init(spicc_init);
 module_exit(spicc_exit);
 
 MODULE_DESCRIPTION("Amlogic SPICC driver");

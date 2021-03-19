@@ -22,15 +22,95 @@
 #include "tdm_hw.h"
 #include "spdif_hw.h"
 
-void aed_set_ram_coeff(int add, int len, unsigned int *params)
+void aed_init_ram_coeff(int version, int add, int len, unsigned int *params)
 {
 	int i, ctrl_v;
 	unsigned int *p = params;
 
 	for (i = 0; i < len; i++, p++) {
-		ctrl_v = ((add+i) << 2) | (0x1 << 1) | (0x1 << 0);
+		ctrl_v = ((add + i) << 2) | (0x1 << 1) | (0x1 << 0);
 		eqdrc_write(AED_COEF_RAM_DATA, *p);
 		eqdrc_write(AED_COEF_RAM_CNTL, ctrl_v);
+	}
+
+	/* init RAMB */
+	if (version > VERSION3) {
+		p = params;
+		for (i = 0; i < len; i++, p++) {
+			ctrl_v = ((add + i) << 2) | (0x1 << 1) | (0x1 << 0);
+			eqdrc_write(AED_COEF_RAM_DATA_B, *p);
+			eqdrc_write(AED_COEF_RAM_CNTL_B, ctrl_v);
+		}
+	}
+}
+
+void aed_set_ram_coeff(int version, int add, int len, unsigned int *params)
+{
+	int i, ctrl_v;
+	unsigned int *p = params, value = 0;
+
+	if (version > VERSION3) {
+		/*
+		 * dynamic control
+		 * step 1. write params to unselected ram
+		 * step 2. switch  to unselected ram
+		 * step 3. write params to the other ram
+		 */
+
+		/*
+		 * EE_AED_EQDRC_DYNAMIC_CNTL bit 0
+		 * coef ram sel: 0 select rama coef; 1 select ramb coef
+		 */
+		value = eqdrc_read(AED_EQDRC_DYNAMIC_CNTL);
+		value &= 0x1;
+
+		if (value) {
+			for (i = 0; i < len; i++, p++) {
+				ctrl_v = ((add + i) << 2)
+					| (0x1 << 1)
+					| (0x1 << 0);
+				eqdrc_write(AED_COEF_RAM_DATA, *p);
+				eqdrc_write(AED_COEF_RAM_CNTL, ctrl_v);
+			}
+		} else {
+			for (i = 0; i < len; i++, p++) {
+				ctrl_v = ((add + i) << 2)
+					| (0x1 << 1)
+					| (0x1 << 0);
+				eqdrc_write(AED_COEF_RAM_DATA_B, *p);
+				eqdrc_write(AED_COEF_RAM_CNTL_B, ctrl_v);
+			}
+		}
+
+		eqdrc_update_bits(AED_EQDRC_DYNAMIC_CNTL,
+				  0x1 << 0,
+				  !value << 0);
+
+		p = params;
+		if (value) {
+			for (i = 0; i < len; i++, p++) {
+				ctrl_v = ((add + i) << 2)
+					| (0x1 << 1)
+					| (0x1 << 0);
+				eqdrc_write(AED_COEF_RAM_DATA_B, *p);
+				eqdrc_write(AED_COEF_RAM_CNTL_B, ctrl_v);
+			}
+		} else {
+			for (i = 0; i < len; i++, p++) {
+				ctrl_v = ((add + i) << 2)
+					| (0x1 << 1)
+					| (0x1 << 0);
+				eqdrc_write(AED_COEF_RAM_DATA, *p);
+				eqdrc_write(AED_COEF_RAM_CNTL, ctrl_v);
+			}
+		}
+
+	} else {
+		for (i = 0; i < len; i++, p++) {
+			ctrl_v = ((add + i) << 2) | (0x1 << 1) | (0x1 << 0);
+			eqdrc_write(AED_COEF_RAM_DATA, *p);
+			eqdrc_write(AED_COEF_RAM_CNTL, ctrl_v);
+		}
 	}
 }
 
@@ -40,7 +120,7 @@ void aed_get_ram_coeff(int add, int len, unsigned int *params)
 	unsigned int *p = params;
 
 	for (i = 0; i < len; i++, p++) {
-		ctrl_v = ((add+i) << 2) | (0x0 << 1) | (0x1 << 0);
+		ctrl_v = ((add + i) << 2) | (0x0 << 1) | (0x1 << 0);
 		eqdrc_write(AED_COEF_RAM_CNTL, ctrl_v);
 		*p = eqdrc_read(AED_COEF_RAM_DATA);
 		//pr_info("%s, params[%d] = %8.8x\n", __func__, i, *p);
@@ -235,7 +315,35 @@ void aed_set_lane_and_channels(int lane_mask, int ch_mask)
 		0xff << 12, (ch_num - 1) << 12);
 }
 
-void aed_set_ctrl(bool enable, int sel, enum frddr_dest module)
+/* max 16ch, 8 lane*/
+void aed_set_lane_and_channels_v3(int lane_mask, int ch_mask)
+{
+	int ch_num = 0, lane_num = 0, i = 0;
+	int val_ch = ch_mask & 0xffff;
+	int val_lane = lane_mask & 0xff;
+
+	for (i = 0; i < 16; i++) {
+		if ((val_ch & 0x1) == 0x1)
+			ch_num++;
+		if ((val_lane & 0x1) == 0x1)
+			lane_num = i;
+		val_ch >>= 1;
+		val_lane >>= 1;
+	}
+
+	eqdrc_update_bits(AED_TOP_CTL1,
+		0xf << 20 | 0xf << 16 | 0x1 << 5 | 0x1 << 4 | 0xf,
+		(lane_num * 2 + 1) << 20 | (lane_num * 2) << 16 |
+		0x1 << 5 | 0x1 << 4 | (ch_num - 1));
+
+	eqdrc_update_bits(AED_TOP_CTL2,
+		0xff << 12, (ch_num - 1) << 12);
+
+	/*pr_info("ch_num = %d, lane_num = %d", ch_num, lane_num);*/
+}
+
+
+void aed_set_ctrl(bool enable, int sel, enum frddr_dest module, int offset)
 {
 	int mask = 0, val = 0;
 
@@ -258,7 +366,8 @@ void aed_set_ctrl(bool enable, int sel, enum frddr_dest module)
 		return;
 	}
 
-	eqdrc_update_bits(AED_TOP_REQ_CTL, mask, val);
+	/*AED_TOP_REQ_CTL or AED_TOP_CTL2*/
+	eqdrc_update_bits((AED_TOP_REQ_CTL + offset), mask, val);
 
 	/* Effect Module */
 	if (module <= TDMOUT_C && module >= TDMOUT_A) {
@@ -271,11 +380,12 @@ void aed_set_ctrl(bool enable, int sel, enum frddr_dest module)
 
 }
 
-void aed_set_format(int msb, enum ddr_types frddr_type, enum ddr_num source)
+void aed_set_format(int msb, enum ddr_types frddr_type,
+				enum ddr_num source, int offset)
 {
 	eqdrc_update_bits(AED_TOP_CTL,
-		0x7 << 11 | 0x1f << 6 | 0x3 << 4,
-		frddr_type << 11 | msb << 6 | source << 4);
+		0x7 << 11 | 0x1f << 6 | 0x3 << (4 - offset),
+		frddr_type << 11 | msb << 6 | source << (4 - offset));
 }
 
 void aed_enable(bool enable)

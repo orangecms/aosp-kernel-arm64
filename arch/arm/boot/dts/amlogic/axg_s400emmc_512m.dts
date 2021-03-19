@@ -51,9 +51,10 @@
 		ramoops@0x07400000 {
 			compatible = "ramoops";
 			reg = <0x07400000 0x00100000>;
-			record-size = <0x8000>;
-			console-size = <0x8000>;
-			ftrace-size = <0x20000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x80000>;
+			pmsg-size = <0x20000>;
 		};
 
 		secmon_reserved:linux,secmon {
@@ -98,6 +99,8 @@
 		pinctrl-1 = <&all_nand_pins>;
 		pinctrl-2 = <&nand_cs_pins>;
 		device_id = <0>;
+		clocks = <&clkc CLKID_SD_EMMC_C_P0_COMP>;
+		clock-names = "core";
 
 		/*fip/tpl configurations, must be same
 		 * with uboot if bl_mode was set as 1
@@ -179,7 +182,9 @@
 	ethmac: ethernet@0xff3f0000 {
 			compatible = "amlogic, gxbb-eth-dwmac";
 			reg = <0xff3f0000 0x10000
-			0xff634540 0x8>;
+			0xff634540 0x8
+			0xff634558 0xc
+			0xffd01008 0x4>;
 			interrupts = <0 8 1>;
 			pinctrl-names = "external_eth_pins";
 			pinctrl-0 = <&external_eth_pins>;

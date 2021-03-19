@@ -28,6 +28,7 @@
 #include <linux/reset.h>
 #include <linux/clk.h>
 #include <linux/amlogic/media/vout/lcd/lcd_vout.h>
+#include <linux/amlogic/media/vout/lcd/lcd_extern.h>
 #include <linux/amlogic/media/vout/lcd/lcd_notify.h>
 #include <linux/amlogic/media/vout/lcd/lcd_unifykey.h>
 #include <linux/amlogic/media/vout/vinfo.h>
@@ -408,7 +409,7 @@ int lcd_power_load_from_dts(struct lcd_config_s *pconf,
 	unsigned int para[5];
 	unsigned int val;
 	struct lcd_power_ctrl_s *lcd_power = pconf->lcd_power;
-	int i, j;
+	int i, j, temp;
 	unsigned int index;
 
 	if (lcd_debug_print_flag)
@@ -455,8 +456,12 @@ int lcd_power_load_from_dts(struct lcd_config_s *pconf,
 					lcd_cpu_gpio_probe(index);
 				break;
 			case LCD_POWER_TYPE_EXTERN:
-				pconf->extern_index = index;
+				lcd_extern_index_lut_add(index);
 				break;
+			case LCD_POWER_TYPE_CLK_SS:
+				temp = pconf->lcd_power->power_on_step[i].value;
+				pconf->lcd_timing.ss_level |= temp << 8;
+			break;
 			default:
 				break;
 			}
@@ -544,7 +549,7 @@ int lcd_power_load_from_dts(struct lcd_config_s *pconf,
 int lcd_power_load_from_unifykey(struct lcd_config_s *pconf,
 		unsigned char *buf, int key_len, int len)
 {
-	int i, j;
+	int i, j, temp;
 	unsigned char *p;
 	unsigned int index;
 	int ret;
@@ -584,6 +589,10 @@ int lcd_power_load_from_unifykey(struct lcd_config_s *pconf,
 			break;
 		case LCD_POWER_TYPE_EXTERN:
 			pconf->extern_index = index;
+			break;
+		case LCD_POWER_TYPE_CLK_SS:
+			temp = pconf->lcd_power->power_on_step[i].value;
+			pconf->lcd_timing.ss_level |= temp << 8;
 			break;
 		default:
 			break;
@@ -1065,3 +1074,32 @@ void lcd_if_enable_retry(struct lcd_config_s *pconf)
 	pconf->retry_enable_cnt = 0;
 }
 
+void lcd_vout_notify_mode_change_pre(void)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+
+	if (lcd_drv->viu_sel == 1) {
+		vout_notifier_call_chain(VOUT_EVENT_MODE_CHANGE_PRE,
+			&lcd_drv->lcd_info->mode);
+	} else if (lcd_drv->viu_sel == 2) {
+#ifdef CONFIG_AMLOGIC_VOUT2_SERVE
+		vout2_notifier_call_chain(VOUT_EVENT_MODE_CHANGE_PRE,
+			&lcd_drv->lcd_info->mode);
+#endif
+	}
+}
+
+void lcd_vout_notify_mode_change(void)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+
+	if (lcd_drv->viu_sel == 1) {
+		vout_notifier_call_chain(VOUT_EVENT_MODE_CHANGE,
+			&lcd_drv->lcd_info->mode);
+	} else if (lcd_drv->viu_sel == 2) {
+#ifdef CONFIG_AMLOGIC_VOUT2_SERVE
+		vout2_notifier_call_chain(VOUT_EVENT_MODE_CHANGE,
+			&lcd_drv->lcd_info->mode);
+#endif
+	}
+}

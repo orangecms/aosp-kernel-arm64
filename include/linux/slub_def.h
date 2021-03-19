@@ -7,6 +7,10 @@
  * (C) 2007 SGI, Christoph Lameter
  */
 #include <linux/kobject.h>
+#ifdef CONFIG_AMLOGIC_PAGE_TRACE
+#include <linux/amlogic/page_trace.h>
+#endif
+
 
 enum stat_item {
 	ALLOC_FASTPATH,		/* Allocation from cpu slab */
@@ -67,7 +71,8 @@ struct kmem_cache {
 	int size;		/* The size of an object including meta data */
 	int object_size;	/* The size of an object without meta data */
 	int offset;		/* Free pointer offset. */
-	int cpu_partial;	/* Number of per cpu partial objects to keep around */
+	/* Number of per cpu partial objects to keep around */
+	unsigned int cpu_partial;
 	struct kmem_cache_order_objects oo;
 
 	/* Allocation and freeing of slabs */
@@ -106,6 +111,9 @@ struct kmem_cache {
 
 #ifdef CONFIG_KASAN
 	struct kasan_cache kasan_info;
+#endif
+#ifdef CONFIG_AMLOGIC_SLAB_TRACE
+	struct slab_trace_group *trace_group;
 #endif
 
 	struct kmem_cache_node *node[MAX_NUMNODES];

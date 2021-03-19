@@ -65,6 +65,8 @@ extern struct am_regs_s r_lut_hdr_sdr_level3;
 #define VD1_HDR2_MATRIXI_CLIP              0x381a
 #define VD1_HDR2_MATRIXO_CLIP              0x381b
 #define VD1_HDR2_CGAIN_OFFT                0x381c
+/*TL1 hist read is 0x3840, tm2 is 0x381d*/
+#define VD1_HDR2_HIST_RD_2                 0x381d
 #define VD1_EOTF_LUT_ADDR_PORT             0x381e
 #define VD1_EOTF_LUT_DATA_PORT             0x381f
 #define VD1_OETF_LUT_ADDR_PORT             0x3820
@@ -96,6 +98,9 @@ extern struct am_regs_s r_lut_hdr_sdr_level3;
 #define VD1_HDR2_PROC_WIN2                 0x383a
 #define VD1_HDR2_MATRIXI_EN_CTRL           0x383b
 #define VD1_HDR2_MATRIXO_EN_CTRL           0x383c
+#define VD1_HDR2_HIST_CTRL                 0x383d
+#define VD1_HDR2_HIST_H_START_END          0x383e
+#define VD1_HDR2_HIST_V_START_END          0x383f
 
 #define VD2_HDR2_CTRL                      0x3850
 #define VD2_HDR2_CLK_GATE                  0x3851
@@ -126,6 +131,8 @@ extern struct am_regs_s r_lut_hdr_sdr_level3;
 #define VD2_HDR2_MATRIXI_CLIP              0x386a
 #define VD2_HDR2_MATRIXO_CLIP              0x386b
 #define VD2_HDR2_CGAIN_OFFT                0x386c
+/*TL1 hist read is 0x3890, tm2 is 0x386d*/
+#define VD2_HDR2_HIST_RD_2                 0x386d
 #define VD2_EOTF_LUT_ADDR_PORT             0x386e
 #define VD2_EOTF_LUT_DATA_PORT             0x386f
 #define VD2_OETF_LUT_ADDR_PORT             0x3870
@@ -157,6 +164,9 @@ extern struct am_regs_s r_lut_hdr_sdr_level3;
 #define VD2_HDR2_PROC_WIN2                 0x388a
 #define VD2_HDR2_MATRIXI_EN_CTRL           0x388b
 #define VD2_HDR2_MATRIXO_EN_CTRL           0x388c
+#define VD2_HDR2_HIST_CTRL                 0x388d
+#define VD2_HDR2_HIST_H_START_END          0x388e
+#define VD2_HDR2_HIST_V_START_END          0x388f
 
 #define OSD1_HDR2_CTRL                      0x38a0
 #define OSD1_HDR2_CLK_GATE                  0x38a1
@@ -218,6 +228,9 @@ extern struct am_regs_s r_lut_hdr_sdr_level3;
 #define OSD1_HDR2_PROC_WIN2                 0x38da
 #define OSD1_HDR2_MATRIXI_EN_CTRL           0x38db
 #define OSD1_HDR2_MATRIXO_EN_CTRL           0x38dc
+#define OSD1_HDR2_HIST_CTRL                 0x38dd
+#define OSD1_HDR2_HIST_H_START_END          0x38de
+#define OSD1_HDR2_HIST_V_START_END          0x38df
 
 #define DI_HDR2_CTRL                      0x3770
 #define DI_HDR2_CLK_GATE                  0x3771
@@ -279,6 +292,9 @@ extern struct am_regs_s r_lut_hdr_sdr_level3;
 #define DI_HDR2_PROC_WIN2                 0x37aa
 #define DI_HDR2_MATRIXI_EN_CTRL           0x37ab
 #define DI_HDR2_MATRIXO_EN_CTRL           0x37ac
+#define DI_HDR2_HIST_CTRL                 0x37ad
+#define DI_HDR2_HIST_H_START_END          0x37ae
+#define DI_HDR2_HIST_V_START_END          0x37af
 
 #define VDIN0_HDR2_CTRL                    0x1280
 #define VDIN0_HDR2_CLK_GATE                0x1281
@@ -401,4 +417,6 @@ extern struct am_regs_s r_lut_hdr_sdr_level3;
 #define VDIN1_HDR2_PROC_WIN2               0x13ba
 #define VDIN1_HDR2_MATRIXI_EN_CTRL         0x13bb
 #define VDIN1_HDR2_MATRIXO_EN_CTRL         0x13bc
+
+#define VPP_VD2_HDR_IN_SIZE                0x1df0
 #endif

@@ -30,15 +30,11 @@
 /* Local Headers */
 #include "osd_hw.h"
 #include "osd_log.h"
+#include "osd.h"
 
 
 #undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
-#define LOGO_DEV_OSD0 0x0
-#define LOGO_DEV_OSD1 0x1
-#define LOGO_DEBUG    0x1001
-#define LOGO_LOADED   0x1002
 
 static DEFINE_MUTEX(logo_lock);
 
@@ -51,6 +47,7 @@ struct para_pair_s {
 static struct para_pair_s logo_args[] = {
 	{"osd0", LOGO_DEV_OSD0},
 	{"osd1", LOGO_DEV_OSD1},
+	{"viu2_osd0", LOGO_DEV_VIU2_OSD0},
 	{"debug", LOGO_DEBUG},
 	{"loaded", LOGO_LOADED},
 };
@@ -102,6 +99,9 @@ static int logo_info_init(char *para)
 		case LOGO_DEV_OSD1:
 			logo_info.index = LOGO_DEV_OSD1;
 			break;
+		case LOGO_DEV_VIU2_OSD0:
+			logo_info.index = LOGO_DEV_VIU2_OSD0;
+			break;
 		case LOGO_DEBUG:
 			logo_info.debug = 1;
 			break;
@@ -138,7 +138,8 @@ static int __init logo_setup(char *str)
 		return -EINVAL;
 
 	do {
-		if (!isalpha(*ptr) && !isdigit(*ptr)) {
+		/* search for a delimiter */
+		if (!isalpha(*ptr) && !isdigit(*ptr) && (*ptr != '_')) {
 			find = 1;
 			break;
 		}
@@ -190,7 +191,7 @@ int set_osd_logo_freescaler(void)
 	s32 dst_y_start = 0, dst_y_end = 0;
 	s32 target_x_end = 0, target_y_end = 0;
 
-	if (logo_info.loaded == 0)
+	if (logo_info.loaded == 0 || logo_info.index < 0)
 		return 0;
 
 	if (osd_get_logo_index() != logo_info.index) {
@@ -200,6 +201,14 @@ int set_osd_logo_freescaler(void)
 
 	if ((osd_hw.osd_meson_dev.osd_ver == OSD_SIMPLE) && (index >= 1))
 		return -1;
+
+	/* for dual logo,
+	 * if viu1 interface(such as hdmi) is unplugged when booting.
+	 * the viu2 display device will be used for viu1 after booting.
+	 */
+	if (osd_hw.osd_meson_dev.has_viu2)
+		if (index >= LOGO_DEV_VIU2_OSD0)
+			index = LOGO_DEV_OSD0;
 
 	if (osd_get_position_from_reg(
 		index,

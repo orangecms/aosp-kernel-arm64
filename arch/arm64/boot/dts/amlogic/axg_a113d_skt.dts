@@ -18,6 +18,7 @@
 /dts-v1/;
 
 #include "mesonaxg.dtsi"
+#include "mesonaxg_skt-panel.dtsi"
 
 / {
 	model = "Amlogic";
@@ -47,9 +48,10 @@
 		ramoops@0x07400000 {
 			compatible = "ramoops";
 			reg = <0x0 0x07400000 0x0 0x00100000>;
-			record-size = <0x8000>;
-			console-size = <0x8000>;
-			ftrace-size = <0x20000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x80000>;
+			pmsg-size = <0x20000>;
 		};
 
 		secmon_reserved:linux,secmon {
@@ -66,6 +68,13 @@
 			reg = <0x0 0x05300000 0x0 0x2000000>;
 			no-map;
 		};
+	};
+
+	cma_shrinker {
+		compatible = "amlogic, cma-shrinker";
+		status = "okay";
+		adj  = <0 100 200 250 900 950>;
+		free = <7680 24288 28528 32600 32768 36624>;
 	};
 
 	mtd_nand {
@@ -160,7 +169,9 @@
 			compatible = "amlogic, gxbb-eth-dwmac";
 			status = "disable";
 			reg = <0x0 0xff3f0000 0x0 0x10000
-			0x0 0xff634540 0x0 0x8>;
+			0x0 0xff634540 0x0 0x8
+			0x0 0xff634558 0x0 0xc
+			0x0 0xffd01008 0x0 0x4>;
 			interrupts = <0 8 1>;
 			pinctrl-names = "external_eth_pins";
 			pinctrl-0 = <&external_eth_pins>;

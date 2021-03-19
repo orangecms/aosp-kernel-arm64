@@ -33,8 +33,28 @@
 #define HDMITX_VIC_MASK			0xff
 
 /* Refer to http://standards-oui.ieee.org/oui/oui.txt */
-#define HDMI_IEEEOUI	0x000C03
+#define HDMI_IEEEOUI		0x000C03
 #define HF_IEEEOUI		0xC45DD8
+#define DOVI_IEEEOUI		0x00D046
+#define HDR10PLUS_IEEEOUI	0x90848B
+
+enum hdmi_tf_type {
+	HDMI_NONE = 0,
+	/* HDMI_HDR_TYPE, HDMI_DV_TYPE, and HDMI_HDR10P_TYPE
+	 * should be mutexed with each other
+	 */
+	HDMI_HDR_TYPE = 0x10,
+	HDMI_HDR_SMPTE_2084	= HDMI_HDR_TYPE | 1,
+	HDMI_HDR_HLG		= HDMI_HDR_TYPE | 2,
+	HDMI_HDR_HDR		= HDMI_HDR_TYPE | 3,
+	HDMI_HDR_SDR		= HDMI_HDR_TYPE | 4,
+	HDMI_DV_TYPE = 0x20,
+	HDMI_DV_VSIF_STD	= HDMI_DV_TYPE | 1,
+	HDMI_DV_VSIF_LL		= HDMI_DV_TYPE | 2,
+	HDMI_HDR10P_TYPE = 0x30,
+	HDMI_HDR10P_DV_VSIF	= HDMI_HDR10P_TYPE | 1,
+};
+
 #define GET_OUI_BYTE0(oui)	(oui & 0xff) /* Little Endian */
 #define GET_OUI_BYTE1(oui)	((oui >> 8) & 0xff)
 #define GET_OUI_BYTE2(oui)	((oui >> 16) & 0xff)
@@ -205,6 +225,7 @@ enum hdmi_vic {
 	HDMIV_2560x1440p60hz,
 	HDMIV_2560x1600p60hz,
 	HDMIV_3440x1440p60hz,
+	HDMIV_2400x1200p90hz,
 	HDMI_VIC_END,
 };
 
@@ -231,6 +252,7 @@ enum hdmi_vic {
 #define HDMI_1080p24            HDMI_1920x1080p24_16x9
 #define HDMI_1080p25            HDMI_1920x1080p25_16x9
 #define HDMI_1080p30            HDMI_1920x1080p30_16x9
+#define HDMI_1080p120           HDMI_1920x1080p120_16x9
 #define HDMI_480p60_16x9_rpt    HDMI_2880x480p60_16x9
 #define HDMI_576p50_16x9_rpt    HDMI_2880x576p50_16x9
 #define HDMI_4k2k_24            HDMI_3840x2160p24_16x9
@@ -247,6 +269,16 @@ enum hdmi_vic {
 #define HDMI_4k2k_60_y420       HDMI_3840x2160p60_16x9_Y420
 #define HDMI_4k2k_smpte_50_y420 HDMI_4096x2160p50_256x135_Y420
 #define HDMI_4k2k_smpte_60_y420 HDMI_4096x2160p60_256x135_Y420
+
+enum hdmi_phy_para {
+	HDMI_PHYPARA_6G = 1, /* 2160p60hz 444 8bit */
+	HDMI_PHYPARA_4p5G, /* 2160p50hz 420 12bit */
+	HDMI_PHYPARA_3p7G, /* 2160p30hz 444 10bit */
+	HDMI_PHYPARA_3G, /* 2160p24hz 444 8bit */
+	HDMI_PHYPARA_LT3G, /* 1080p60hz 444 12bit */
+	HDMI_PHYPARA_DEF = HDMI_PHYPARA_LT3G,
+	HDMI_PHYPARA_270M, /* 480p60hz 444 8bit */
+};
 
 enum hdmi_audio_fs;
 struct dtd;
@@ -392,6 +424,7 @@ unsigned int hdmi_get_csc_coef(
 	unsigned int color_depth, unsigned int color_format,
 	unsigned char **coef_array, unsigned int *coef_length);
 struct hdmi_format_para *hdmi_get_fmt_name(char const *name, char const *attr);
+struct hdmi_format_para *hdmi_tst_fmt_name(char const *name, char const *attr);
 struct vinfo_s *hdmi_get_valid_vinfo(char *mode);
 const char *hdmi_get_str_cd(struct hdmi_format_para *para);
 const char *hdmi_get_str_cs(struct hdmi_format_para *para);

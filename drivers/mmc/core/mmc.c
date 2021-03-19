@@ -15,10 +15,12 @@
 #include <linux/slab.h>
 #include <linux/stat.h>
 #include <linux/pm_runtime.h>
+#include <linux/clk.h>
 
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/mmc.h>
+#include <linux/amlogic/sd.h>
 
 #include "core.h"
 #include "host.h"
@@ -28,6 +30,7 @@
 
 #define DEFAULT_CMD6_TIMEOUT_MS	500
 #define AMLOGIC_HS400_TIMING 1
+#define MIN_CACHE_EN_TIMEOUT_MS 1600
 
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
@@ -523,8 +526,7 @@ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
 			card->cid.year += 16;
 
 		/* check whether the eMMC card supports BKOPS */
-		if (!mmc_card_broken_hpi(card) &&
-		    ext_csd[EXT_CSD_BKOPS_SUPPORT] & 0x1) {
+		if (ext_csd[EXT_CSD_BKOPS_SUPPORT] & 0x1) {
 			card->ext_csd.bkops = 1;
 			card->ext_csd.man_bkops_en =
 					(ext_csd[EXT_CSD_BKOPS_EN] &
@@ -1164,6 +1166,9 @@ static int mmc_select_hs400(struct mmc_card *card)
 	err = mmc_switch_status(card);
 	if (err)
 		goto out_err;
+#ifdef CONFIG_AMLOGIC_MMC
+	aml_read_tuning_para(host);
+#endif
 
 	/* Switch card to DDR */
 	err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
@@ -1815,20 +1820,26 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		if (err) {
 			pr_warn("%s: Enabling HPI failed\n",
 				mmc_hostname(card->host));
+			card->ext_csd.hpi_en = 0;
 			err = 0;
-		} else
+		} else {
 			card->ext_csd.hpi_en = 1;
+		}
 	}
 
 	/*
-	 * If cache size is higher than 0, this indicates
-	 * the existence of cache and it can be turned on.
+	 * If cache size is higher than 0, this indicates the existence of cache
+	 * and it can be turned on. Note that some eMMCs from Micron has been
+	 * reported to need ~800 ms timeout, while enabling the cache after
+	 * sudden power failure tests. Let's extend the timeout to a minimum of
+	 * DEFAULT_CACHE_EN_TIMEOUT_MS and do it for all cards.
 	 */
-	if (!mmc_card_broken_hpi(card) &&
-	    card->ext_csd.cache_size > 0) {
+	if (card->ext_csd.cache_size > 0) {
+		unsigned int timeout_ms = MIN_CACHE_EN_TIMEOUT_MS;
+
+		timeout_ms = max(card->ext_csd.generic_cmd6_time, timeout_ms);
 		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-				EXT_CSD_CACHE_CTRL, 1,
-				card->ext_csd.generic_cmd6_time);
+				EXT_CSD_CACHE_CTRL, 1, timeout_ms);
 		if (err && err != -EBADMSG)
 			goto free_card;
 
@@ -2017,6 +2028,10 @@ static int _mmc_suspend(struct mmc_host *host, bool is_suspend)
 	int err = 0;
 	unsigned int notify_type = is_suspend ? EXT_CSD_POWER_OFF_SHORT :
 					EXT_CSD_POWER_OFF_LONG;
+#ifdef CONFIG_AMLOGIC_MMC
+	struct amlsd_platform *pdata = mmc_priv(host);
+	struct amlsd_host *mmc = pdata->host;
+#endif
 
 	BUG_ON(!host);
 	BUG_ON(!host->card);
@@ -2048,6 +2063,14 @@ static int _mmc_suspend(struct mmc_host *host, bool is_suspend)
 		mmc_power_off(host);
 		mmc_card_set_suspended(host->card);
 	}
+
+#ifdef CONFIG_AMLOGIC_MMC
+	if (mmc->gp0_clk) {
+		clk_disable_unprepare(mmc->gp0_clk);
+		mmc->gp0_clk = NULL;
+	}
+#endif
+
 out:
 	mmc_release_host(host);
 	return err;

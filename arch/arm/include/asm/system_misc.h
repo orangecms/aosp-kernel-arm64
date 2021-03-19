@@ -7,6 +7,7 @@
 #include <linux/linkage.h>
 #include <linux/irqflags.h>
 #include <linux/reboot.h>
+#include <linux/percpu.h>
 #ifdef CONFIG_AMLOGIC_USER_FAULT
 #include <linux/ratelimit.h>
 #endif
@@ -19,11 +20,29 @@ extern void (*arm_pm_idle)(void);
 
 #ifdef CONFIG_AMLOGIC_USER_FAULT
 extern void show_all_pfn(struct task_struct *task, struct pt_regs *regs);
+extern void show_vma(struct mm_struct *mm, unsigned long addr);
 #else
 static inline void show_all_pfn(struct task_struct *task, struct pt_regs *regs)
 {
 }
+static inline void show_vma(struct mm_struct *mm, unsigned long addr)
+{
+}
 #endif /* CONFIG_AMLOGIC_USER_FAULT */
+
+#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+typedef void (*harden_branch_predictor_fn_t)(void);
+DECLARE_PER_CPU(harden_branch_predictor_fn_t, harden_branch_predictor_fn);
+static inline void harden_branch_predictor(void)
+{
+	harden_branch_predictor_fn_t fn = per_cpu(harden_branch_predictor_fn,
+						  smp_processor_id());
+	if (fn)
+		fn();
+}
+#else
+#define harden_branch_predictor() do { } while (0)
+#endif
 
 #define UDBG_UNDEFINED	(1 << 0)
 #define UDBG_SYSCALL	(1 << 1)

@@ -364,8 +364,9 @@
 		compatible = "amlogic, g12a-eth-dwmac","snps,dwmac";
 		reg = <0xff3f0000 0x10000
 			0xff634540 0x8
-			0xff64c000 0xa0>;
-		reg-names = "eth_base", "eth_cfg", "eth_pll";
+			0xff64c000 0xa0
+			0xffd01008 0x4>;
+		reg-names = "eth_base", "eth_cfg", "eth_pll", "eth_reset";
 		interrupts = <0 8 1>;
 		interrupt-names = "macirq";
 		status = "disabled";
@@ -732,6 +733,7 @@
 			aoclkc: clock-controller@0 {
 				compatible = "amlogic,g12b-aoclkc";
 				#clock-cells = <1>;
+				#reset-cells = <1>;
 				reg = <0x0 0x320>;
 			};
 
@@ -1174,6 +1176,7 @@
 		ic_type = <11>;
 		vend_data: vend_data{ /* Should modified by Customer */
 			vendor_name = "Amlogic"; /* Max Chars: 8 */
+			product_desc = "MBox Meson Ref"; /* Max Chars: 16 */
 			/* standards.ieee.org/develop/regauth/oui/oui.txt */
 			vendor_id = <0x000000>;
 		};
@@ -1204,6 +1207,7 @@
 			>;
 		reg-names = "NN_REG","NN_SRAM","NN_MEM0",
 			"NN_MEM1","NN_RESET","NN_CLK";
+		nn_power_version = <2>;
 		nn_efuse = <0xff63003c 0x20>;
 	};
 
@@ -1219,6 +1223,7 @@
 		product_desc = "G12B"; /* Max Chars: 16    */
 		cec_osd_string = "AML_MBOX"; /* Max Chars: 14    */
 		port_num = <1>;
+		output = <1>;
 		ee_cec;
 		arc_port_mask = <0x2>;
 		interrupts = <0 203 1
@@ -1276,6 +1281,13 @@
 		compatible = "amlogic, vout";
 		dev_name = "vout";
 		status = "okay";
+
+		/* fr_policy:
+		 *    0: disable
+		 *    1: nearby (only for 60->59.94 and 30->29.97)
+		 *    2: force (60/50/30/24/59.94/23.97)
+		 */
+		fr_policy = <2>;
 	};
 
 	vout2 {
@@ -1286,6 +1298,34 @@
 			<&clkc CLKID_VPU_CLKC_MUX>;
 		clock-names = "vpu_clkc0",
 			"vpu_clkc";
+
+		/* fr_policy:
+		 *    0: disable
+		 *    1: nearby (only for 60->59.94 and 30->29.97)
+		 *    2: force (60/50/30/24/59.94/23.97)
+		 */
+		fr_policy = <2>;
+	};
+
+	dummy_venc: dummy_venc {
+		compatible = "amlogic, dummy_venc";
+		status = "okay";
+		clocks = <&clkc CLKID_VCLK2_ENCP
+			&clkc CLKID_VCLK2_VENCP0
+			&clkc CLKID_VCLK2_VENCP1
+			&clkc CLKID_VCLK2_ENCI
+			&clkc CLKID_VCLK2_VENCI0
+			&clkc CLKID_VCLK2_VENCI1
+			&clkc CLKID_VCLK2_ENCL
+			&clkc CLKID_VCLK2_VENCL>;
+		clock-names = "encp_top_gate",
+			"encp_int_gate0",
+			"encp_int_gate1",
+			"venci_top_gate",
+			"enci_int_gate0",
+			"enci_int_gate1",
+			"encl_top_gate",
+			"encl_int_gate";
 	};
 
 	vdac {
@@ -1594,23 +1634,14 @@
 		pinctrl-0 = <&all_nand_pins>;
 		pinctrl-1 = <&all_nand_pins>;
 		pinctrl-2 = <&nand_cs_pins>;
-		clocks = <&clkc CLKID_SD_EMMC_C>,
-				<&clkc CLKID_SD_EMMC_C_P0_COMP>;
-		clock-names = "core", "clkin";
-
 		device_id = <0>;
-		/*fip/tpl configurations, must be same
-		 * with uboot if bl_mode was set as 1
-		 * bl_mode: 0 compact mode; 1 descrete mode
-		 * if bl_mode was set as 1, fip configuration will work
-		 */
+		clocks = <&clkc CLKID_SD_EMMC_C>,
+			<&clkc CLKID_FCLK_DIV2>;
+		clock-names = "gate", "fdiv2pll";
 		bl_mode = <1>;
-		/*copy count of fip*/
 		fip_copies = <4>;
-		/*size of each fip copy */
 		fip_size = <0x200000>;
 		nand_clk_ctrl = <0xFFE07000>;
-		/*partions defined in dts */
 	};
 
 	meson_cooldev: meson-cooldev@0 {
@@ -1793,44 +1824,50 @@
 		compatible = "pwm-regulator";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pwm_ao_d_pins3>;
-		pwms = <&pwm_AO_cd MESON_PWM_1 1250 0>;
+		pwms = <&pwm_AO_cd MESON_PWM_1 1500 0>;
 		regulator-name = "vddcpu0";
-		regulator-min-microvolt = <721000>;
-		regulator-max-microvolt = <1022000>;
+		regulator-min-microvolt = <680000>;
+		regulator-max-microvolt = <1040000>;
 		regulator-always-on;
-		max-duty-cycle = <1250>;
+		max-duty-cycle = <1500>;
 		/* Voltage Duty-Cycle */
-		voltage-table = <1022000 0>,
-			<1011000 3>,
-			<1001000 6>,
-			<991000 10>,
-			<981000 13>,
-			<971000 16>,
-			<961000 20>,
-			<951000 23>,
-			<941000 26>,
-			<931000 30>,
-			<921000 33>,
-			<911000 36>,
-			<901000 40>,
-			<891000 43>,
-			<881000 46>,
-			<871000 50>,
-			<861000 53>,
-			<851000 56>,
-			<841000 60>,
-			<831000 63>,
-			<821000 67>,
-			<811000 70>,
-			<801000 73>,
-			<791000 76>,
-			<781000 80>,
-			<771000 83>,
-			<761000 86>,
-			<751000 90>,
-			<741000 93>,
-			<731000 96>,
-			<721000 100>;
+		voltage-table = <1040000 0>,
+			<1030000 3>,
+			<1020000 6>,
+			<1010000 8>,
+			<1000000 11>,
+			<990000 14>,
+			<980000 17>,
+			<970000 20>,
+			<960000 23>,
+			<950000 26>,
+			<940000 29>,
+			<930000 31>,
+			<920000 34>,
+			<910000 37>,
+			<900000 40>,
+			<890000 43>,
+			<880000 45>,
+			<870000 48>,
+			<860000 51>,
+			<850000 54>,
+			<840000 56>,
+			<830000 59>,
+			<820000 62>,
+			<810000 65>,
+			<800000 68>,
+			<790000 70>,
+			<780000 73>,
+			<770000 76>,
+			<760000 79>,
+			<750000 81>,
+			<740000 84>,
+			<730000 87>,
+			<720000 89>,
+			<710000 92>,
+			<700000 95>,
+			<690000 98>,
+			<680000 100>;
 		status = "okay";
 	 };
 
@@ -1838,44 +1875,50 @@
 		compatible = "pwm-regulator";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pwm_a_e2>;
-		pwms = <&pwm_ab MESON_PWM_0 1250 0>;
+		pwms = <&pwm_ab MESON_PWM_0 1500 0>;
 		regulator-name = "vddcpu1";
-		regulator-min-microvolt = <721000>;
-		regulator-max-microvolt = <1022000>;
+		regulator-min-microvolt = <680000>;
+		regulator-max-microvolt = <1040000>;
 		regulator-always-on;
-		max-duty-cycle = <1250>;
+		max-duty-cycle = <1500>;
 		/* Voltage Duty-Cycle */
-		voltage-table = <1022000 0>,
-			<1011000 3>,
-			<1001000 6>,
-			<991000 10>,
-			<981000 13>,
-			<971000 16>,
-			<961000 20>,
-			<951000 23>,
-			<941000 26>,
-			<931000 30>,
-			<921000 33>,
-			<911000 36>,
-			<901000 40>,
-			<891000 43>,
-			<881000 46>,
-			<871000 50>,
-			<861000 53>,
-			<851000 56>,
-			<841000 60>,
-			<831000 63>,
-			<821000 67>,
-			<811000 70>,
-			<801000 73>,
-			<791000 76>,
-			<781000 80>,
-			<771000 83>,
-			<761000 86>,
-			<751000 90>,
-			<741000 93>,
-			<731000 96>,
-			<721000 100>;
+		voltage-table = <1040000 0>,
+			<1030000 3>,
+			<1020000 6>,
+			<1010000 8>,
+			<1000000 11>,
+			<990000 14>,
+			<980000 17>,
+			<970000 20>,
+			<960000 23>,
+			<950000 26>,
+			<940000 29>,
+			<930000 31>,
+			<920000 34>,
+			<910000 37>,
+			<900000 40>,
+			<890000 43>,
+			<880000 45>,
+			<870000 48>,
+			<860000 51>,
+			<850000 54>,
+			<840000 56>,
+			<830000 59>,
+			<820000 62>,
+			<810000 65>,
+			<800000 68>,
+			<790000 70>,
+			<780000 73>,
+			<770000 76>,
+			<760000 79>,
+			<750000 81>,
+			<740000 84>,
+			<730000 87>,
+			<720000 89>,
+			<710000 92>,
+			<700000 95>,
+			<690000 98>,
+			<680000 100>;
 		status = "okay";
 	 };
 
@@ -1893,6 +1936,7 @@
 		status = "okay";
 		reg = <0xff638000 0x100
 		       0xff638c00 0x100>;
+		sec_base = <0xff639000>;
 		interrupts = <0 52 1>;
 		interrupt-names = "ddr_bandwidth";
 	};

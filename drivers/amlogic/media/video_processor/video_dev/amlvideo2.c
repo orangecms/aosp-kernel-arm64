@@ -42,6 +42,7 @@
 #include <media/v4l2-ioctl.h>
 #include <linux/types.h>
 #include <linux/amlogic/media/canvas/canvas.h>
+#include <linux/amlogic/media/canvas/canvas_mgr.h>
 #include <linux/amlogic/media/vfm/vframe.h>
 #include <linux/amlogic/media/vfm/vframe_provider.h>
 #include <linux/amlogic/media/vfm/vframe_receiver.h>
@@ -402,6 +403,7 @@ struct completion plug_sema;
 bool field_flag;
 bool field_condition_flag;
 bool ge2d_multi_process_flag;
+int aml2_canvas[3];
 };
 
 struct amlvideo2_fh {
@@ -865,7 +867,7 @@ struct amlvideo2_node *node)
 	struct canvas_s cs0, cs1, cs2, cd;
 	int current_mirror;
 	int cur_angle = 0;
-	int output_canvas = vf->canvas0Addr;
+	int output_canvas = output->canvas_id;
 
 	/* ============================ */
 	/* top field */
@@ -1062,18 +1064,58 @@ struct amlvideo2_node *node)
 	ge2d_config->src1_gb_alpha = 0;/* 0xff; */
 	ge2d_config->dst_xy_swap = 0;
 
-	canvas_read(vf->canvas0Addr & 0xff, &cs0);
-	canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
-	canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
-	ge2d_config->src_planes[0].addr = cs0.addr;
-	ge2d_config->src_planes[0].w = cs0.width;
-	ge2d_config->src_planes[0].h = cs0.height;
-	ge2d_config->src_planes[1].addr = cs1.addr;
-	ge2d_config->src_planes[1].w = cs1.width;
-	ge2d_config->src_planes[1].h = cs1.height;
-	ge2d_config->src_planes[2].addr = cs2.addr;
-	ge2d_config->src_planes[2].w = cs2.width;
-	ge2d_config->src_planes[2].h = cs2.height;
+	if (vf->canvas0Addr == (u32)-1) {
+		canvas_config_config(node->aml2_canvas[0],
+				     &vf->canvas0_config[0]);
+		if (vf->plane_num == 2) {
+			canvas_config_config(
+					     node->aml2_canvas[1],
+					     &vf->canvas0_config[1]);
+		} else if (vf->plane_num == 3) {
+			canvas_config_config(
+					     node->aml2_canvas[2],
+					     &vf->canvas0_config[2]);
+		}
+		ge2d_config->src_para.canvas_index =
+			node->aml2_canvas[0]
+			| (node->aml2_canvas[1] << 8)
+			| (node->aml2_canvas[2] << 16);
+		ge2d_config->src_planes[0].addr =
+				vf->canvas0_config[0].phy_addr;
+		ge2d_config->src_planes[0].w =
+				vf->canvas0_config[0].width;
+		ge2d_config->src_planes[0].h =
+				vf->canvas0_config[0].height;
+		ge2d_config->src_planes[1].addr =
+				vf->canvas0_config[1].phy_addr;
+		ge2d_config->src_planes[1].w =
+				vf->canvas0_config[1].width;
+		ge2d_config->src_planes[1].h =
+				vf->canvas0_config[1].height >> 1;
+		if (vf->plane_num == 3) {
+			ge2d_config->src_planes[2].addr =
+				vf->canvas0_config[2].phy_addr;
+			ge2d_config->src_planes[2].w =
+				vf->canvas0_config[2].width;
+			ge2d_config->src_planes[2].h =
+				vf->canvas0_config[2].height >> 1;
+		}
+	} else {
+		canvas_read(vf->canvas0Addr & 0xff, &cs0);
+		canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
+		canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
+		ge2d_config->src_planes[0].addr = cs0.addr;
+		ge2d_config->src_planes[0].w = cs0.width;
+		ge2d_config->src_planes[0].h = cs0.height;
+		ge2d_config->src_planes[1].addr = cs1.addr;
+		ge2d_config->src_planes[1].w = cs1.width;
+		ge2d_config->src_planes[1].h = cs1.height;
+		ge2d_config->src_planes[2].addr = cs2.addr;
+		ge2d_config->src_planes[2].w = cs2.width;
+		ge2d_config->src_planes[2].h = cs2.height;
+		ge2d_config->src_para.canvas_index = vf->canvas0Addr;
+	}
+
 	canvas_read(output_canvas & 0xff, &cd);
 	ge2d_config->dst_planes[0].addr = cd.addr;
 	ge2d_config->dst_planes[0].w = cd.width;
@@ -1081,7 +1123,6 @@ struct amlvideo2_node *node)
 	ge2d_config->src_key.key_enable = 0;
 	ge2d_config->src_key.key_mask = 0;
 	ge2d_config->src_key.key_mode = 0;
-	ge2d_config->src_para.canvas_index = vf->canvas0Addr;
 	ge2d_config->src_para.mem_type = CANVAS_TYPE_INVALID;
 	ge2d_config->src_para.format = get_input_format(vf);
 	ge2d_config->src_para.fill_color_en = 0;
@@ -1144,12 +1185,14 @@ struct amlvideo2_node *node)
 		return -1;
 	}
 	if (amlvideo2_dbg_en & 4) {
-		pr_info("src0_addr = %lx, w = %d, h = %d\n",
-			cs0.addr, cs0.width, cs0.height);
-		pr_info("src1_addr = %lx, w = %d, h = %d\n",
-			cs1.addr, cs1.width, cs1.height);
-		pr_info("src2_addr = %lx, w = %d, h = %d\n",
-			cs2.addr, cs2.width, cs2.height);
+		if (vf->canvas0Addr != (u32)-1) {
+			pr_info("src0_addr = %lx, w = %d, h = %d\n",
+				cs0.addr, cs0.width, cs0.height);
+			pr_info("src1_addr = %lx, w = %d, h = %d\n",
+				cs1.addr, cs1.width, cs1.height);
+			pr_info("src2_addr = %lx, w = %d, h = %d\n",
+				cs2.addr, cs2.width, cs2.height);
+		}
 		pr_info("output: w = %d, h = %d, output_canvas = %x\n\n",
 			output->width, output->height, output_canvas);
 
@@ -1414,18 +1457,58 @@ struct amlvideo2_node *node)
 	ge2d_config->src1_gb_alpha = 0;/* 0xff; */
 	ge2d_config->dst_xy_swap = 0;
 
-	canvas_read(vf->canvas1Addr & 0xff, &cs0);
-	canvas_read((vf->canvas1Addr >> 8) & 0xff, &cs1);
-	canvas_read((vf->canvas1Addr >> 16) & 0xff, &cs2);
-	ge2d_config->src_planes[0].addr = cs0.addr;
-	ge2d_config->src_planes[0].w = cs0.width;
-	ge2d_config->src_planes[0].h = cs0.height;
-	ge2d_config->src_planes[1].addr = cs1.addr;
-	ge2d_config->src_planes[1].w = cs1.width;
-	ge2d_config->src_planes[1].h = cs1.height;
-	ge2d_config->src_planes[2].addr = cs2.addr;
-	ge2d_config->src_planes[2].w = cs2.width;
-	ge2d_config->src_planes[2].h = cs2.height;
+	if (vf->canvas1Addr == (u32)-1) {
+		canvas_config_config(node->aml2_canvas[0],
+				     &vf->canvas1_config[0]);
+		if (vf->plane_num == 2) {
+			canvas_config_config(
+					     node->aml2_canvas[1],
+					     &vf->canvas1_config[1]);
+		} else if (vf->plane_num == 3) {
+			canvas_config_config(
+					     node->aml2_canvas[2],
+					     &vf->canvas1_config[2]);
+		}
+		ge2d_config->src_para.canvas_index =
+			node->aml2_canvas[0]
+			| (node->aml2_canvas[1] << 8)
+			| (node->aml2_canvas[2] << 16);
+		ge2d_config->src_planes[0].addr =
+				vf->canvas1_config[0].phy_addr;
+		ge2d_config->src_planes[0].w =
+				vf->canvas1_config[0].width;
+		ge2d_config->src_planes[0].h =
+				vf->canvas1_config[0].height;
+		ge2d_config->src_planes[1].addr =
+				vf->canvas1_config[1].phy_addr;
+		ge2d_config->src_planes[1].w =
+				vf->canvas1_config[1].width;
+		ge2d_config->src_planes[1].h =
+				vf->canvas1_config[1].height >> 1;
+		if (vf->plane_num == 3) {
+			ge2d_config->src_planes[2].addr =
+				vf->canvas1_config[2].phy_addr;
+			ge2d_config->src_planes[2].w =
+				vf->canvas1_config[2].width;
+			ge2d_config->src_planes[2].h =
+				vf->canvas1_config[2].height >> 1;
+		}
+	} else {
+		canvas_read(vf->canvas1Addr & 0xff, &cs0);
+		canvas_read((vf->canvas1Addr >> 8) & 0xff, &cs1);
+		canvas_read((vf->canvas1Addr >> 16) & 0xff, &cs2);
+		ge2d_config->src_planes[0].addr = cs0.addr;
+		ge2d_config->src_planes[0].w = cs0.width;
+		ge2d_config->src_planes[0].h = cs0.height;
+		ge2d_config->src_planes[1].addr = cs1.addr;
+		ge2d_config->src_planes[1].w = cs1.width;
+		ge2d_config->src_planes[1].h = cs1.height;
+		ge2d_config->src_planes[2].addr = cs2.addr;
+		ge2d_config->src_planes[2].w = cs2.width;
+		ge2d_config->src_planes[2].h = cs2.height;
+		ge2d_config->src_para.canvas_index = vf->canvas1Addr;
+	}
+
 	canvas_read(output_canvas & 0xff, &cd);
 	ge2d_config->dst_planes[0].addr = cd.addr;
 	ge2d_config->dst_planes[0].w = cd.width;
@@ -1433,7 +1516,6 @@ struct amlvideo2_node *node)
 	ge2d_config->src_key.key_enable = 0;
 	ge2d_config->src_key.key_mask = 0;
 	ge2d_config->src_key.key_mode = 0;
-	ge2d_config->src_para.canvas_index = vf->canvas1Addr;
 	ge2d_config->src_para.mem_type = CANVAS_TYPE_INVALID;
 	ge2d_config->src_para.format = get_input_format(vf);
 	ge2d_config->src_para.fill_color_en = 0;
@@ -1805,18 +1887,58 @@ struct amlvideo2_node *node)
 	ge2d_config->src1_gb_alpha = 0;/* 0xff; */
 	ge2d_config->dst_xy_swap = 0;
 
-	canvas_read(vf->canvas0Addr & 0xff, &cs0);
-	canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
-	canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
-	ge2d_config->src_planes[0].addr = cs0.addr;
-	ge2d_config->src_planes[0].w = cs0.width;
-	ge2d_config->src_planes[0].h = cs0.height;
-	ge2d_config->src_planes[1].addr = cs1.addr;
-	ge2d_config->src_planes[1].w = cs1.width;
-	ge2d_config->src_planes[1].h = cs1.height;
-	ge2d_config->src_planes[2].addr = cs2.addr;
-	ge2d_config->src_planes[2].w = cs2.width;
-	ge2d_config->src_planes[2].h = cs2.height;
+	if (vf->canvas0Addr == (u32)-1) {
+		canvas_config_config(node->aml2_canvas[0],
+				     &vf->canvas0_config[0]);
+		if (vf->plane_num == 2) {
+			canvas_config_config(
+					      node->aml2_canvas[1],
+					      &vf->canvas0_config[1]);
+		} else if (vf->plane_num == 3) {
+			canvas_config_config(
+					     node->aml2_canvas[2],
+					     &vf->canvas0_config[2]);
+		}
+		ge2d_config->src_para.canvas_index =
+			node->aml2_canvas[0]
+			| (node->aml2_canvas[1] << 8)
+			| (node->aml2_canvas[2] << 16);
+		ge2d_config->src_planes[0].addr =
+				vf->canvas0_config[0].phy_addr;
+		ge2d_config->src_planes[0].w =
+				vf->canvas0_config[0].width;
+		ge2d_config->src_planes[0].h =
+				vf->canvas0_config[0].height;
+		ge2d_config->src_planes[1].addr =
+				vf->canvas0_config[1].phy_addr;
+		ge2d_config->src_planes[1].w =
+				vf->canvas0_config[1].width;
+		ge2d_config->src_planes[1].h =
+				vf->canvas0_config[1].height >> 1;
+		if (vf->plane_num == 3) {
+			ge2d_config->src_planes[2].addr =
+				vf->canvas0_config[2].phy_addr;
+			ge2d_config->src_planes[2].w =
+				vf->canvas0_config[2].width;
+			ge2d_config->src_planes[2].h =
+				vf->canvas0_config[2].height >> 1;
+		}
+	} else {
+		canvas_read(vf->canvas0Addr & 0xff, &cs0);
+		canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
+		canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
+		ge2d_config->src_planes[0].addr = cs0.addr;
+		ge2d_config->src_planes[0].w = cs0.width;
+		ge2d_config->src_planes[0].h = cs0.height;
+		ge2d_config->src_planes[1].addr = cs1.addr;
+		ge2d_config->src_planes[1].w = cs1.width;
+		ge2d_config->src_planes[1].h = cs1.height;
+		ge2d_config->src_planes[2].addr = cs2.addr;
+		ge2d_config->src_planes[2].w = cs2.width;
+		ge2d_config->src_planes[2].h = cs2.height;
+		ge2d_config->src_para.canvas_index = vf->canvas0Addr;
+	}
+
 	canvas_read(output_canvas & 0xff, &cd);
 	ge2d_config->dst_planes[0].addr = cd.addr;
 	ge2d_config->dst_planes[0].w = cd.width;
@@ -1824,7 +1946,6 @@ struct amlvideo2_node *node)
 	ge2d_config->src_key.key_enable = 0;
 	ge2d_config->src_key.key_mask = 0;
 	ge2d_config->src_key.key_mode = 0;
-	ge2d_config->src_para.canvas_index = vf->canvas0Addr;
 	ge2d_config->src_para.mem_type = CANVAS_TYPE_INVALID;
 	ge2d_config->src_para.format = get_interlace_input_format(vf, output);
 	ge2d_config->src_para.fill_color_en = 0;
@@ -1886,12 +2007,14 @@ struct amlvideo2_node *node)
 		return -1;
 	}
 	if (amlvideo2_dbg_en & 4) {
-		pr_info("src0_addr = %lx, w = %d, h = %d\n",
-			cs0.addr, cs0.width, cs0.height);
-		pr_info("src1_addr = %lx, w = %d, h = %d\n",
-			cs1.addr, cs1.width, cs1.height);
-		pr_info("src2_addr = %lx, w = %d, h = %d\n",
-			cs2.addr, cs2.width, cs2.height);
+		if (vf->canvas0Addr != (u32)-1) {
+			pr_info("src0_addr = %lx, w = %d, h = %d\n",
+				cs0.addr, cs0.width, cs0.height);
+			pr_info("src1_addr = %lx, w = %d, h = %d\n",
+				cs1.addr, cs1.width, cs1.height);
+			pr_info("src2_addr = %lx, w = %d, h = %d\n",
+				cs2.addr, cs2.width, cs2.height);
+		}
 		pr_info("output: w = %d, h = %d, output_canvas = %x\n\n",
 			output->width, output->height, output_canvas);
 
@@ -2206,18 +2329,58 @@ struct amlvideo2_node *node)
 	ge2d_config->src1_gb_alpha = 0;/* 0xff; */
 	ge2d_config->dst_xy_swap = 0;
 
-	canvas_read(vf->canvas0Addr & 0xff, &cs0);
-	canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
-	canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
-	ge2d_config->src_planes[0].addr = cs0.addr;
-	ge2d_config->src_planes[0].w = cs0.width;
-	ge2d_config->src_planes[0].h = cs0.height;
-	ge2d_config->src_planes[1].addr = cs1.addr;
-	ge2d_config->src_planes[1].w = cs1.width;
-	ge2d_config->src_planes[1].h = cs1.height;
-	ge2d_config->src_planes[2].addr = cs2.addr;
-	ge2d_config->src_planes[2].w = cs2.width;
-	ge2d_config->src_planes[2].h = cs2.height;
+	if (vf->canvas0Addr == (u32)-1) {
+		canvas_config_config(node->aml2_canvas[0],
+				     &vf->canvas0_config[0]);
+		if (vf->plane_num == 2) {
+			canvas_config_config(
+					     node->aml2_canvas[1],
+					     &vf->canvas0_config[1]);
+		} else if (vf->plane_num == 3) {
+			canvas_config_config(
+					     node->aml2_canvas[2],
+					     &vf->canvas0_config[2]);
+		}
+		ge2d_config->src_para.canvas_index =
+			node->aml2_canvas[0]
+			| (node->aml2_canvas[1] << 8)
+			| (node->aml2_canvas[2] << 16);
+		ge2d_config->src_planes[0].addr =
+				vf->canvas0_config[0].phy_addr;
+		ge2d_config->src_planes[0].w =
+				vf->canvas0_config[0].width;
+		ge2d_config->src_planes[0].h =
+				vf->canvas0_config[0].height;
+		ge2d_config->src_planes[1].addr =
+				vf->canvas0_config[1].phy_addr;
+		ge2d_config->src_planes[1].w =
+				vf->canvas0_config[1].width;
+		ge2d_config->src_planes[1].h =
+				vf->canvas0_config[1].height >> 1;
+		if (vf->plane_num == 3) {
+			ge2d_config->src_planes[2].addr =
+				vf->canvas0_config[2].phy_addr;
+			ge2d_config->src_planes[2].w =
+				vf->canvas0_config[2].width;
+			ge2d_config->src_planes[2].h =
+				vf->canvas0_config[2].height >> 1;
+		}
+	} else {
+		canvas_read(vf->canvas0Addr & 0xff, &cs0);
+		canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
+		canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
+		ge2d_config->src_planes[0].addr = cs0.addr;
+		ge2d_config->src_planes[0].w = cs0.width;
+		ge2d_config->src_planes[0].h = cs0.height;
+		ge2d_config->src_planes[1].addr = cs1.addr;
+		ge2d_config->src_planes[1].w = cs1.width;
+		ge2d_config->src_planes[1].h = cs1.height;
+		ge2d_config->src_planes[2].addr = cs2.addr;
+		ge2d_config->src_planes[2].w = cs2.width;
+		ge2d_config->src_planes[2].h = cs2.height;
+		ge2d_config->src_para.canvas_index = vf->canvas0Addr;
+	}
+
 	canvas_read(output_canvas & 0xff, &cd);
 	ge2d_config->dst_planes[0].addr = cd.addr;
 	ge2d_config->dst_planes[0].w = cd.width;
@@ -2225,7 +2388,6 @@ struct amlvideo2_node *node)
 	ge2d_config->src_key.key_enable = 0;
 	ge2d_config->src_key.key_mask = 0;
 	ge2d_config->src_key.key_mode = 0;
-	ge2d_config->src_para.canvas_index = vf->canvas0Addr;
 	ge2d_config->src_para.mem_type = CANVAS_TYPE_INVALID;
 	ge2d_config->src_para.format = get_input_format_no_interlace(vf);
 	ge2d_config->src_para.fill_color_en = 0;
@@ -2287,12 +2449,14 @@ struct amlvideo2_node *node)
 		return -1;
 	}
 	if (amlvideo2_dbg_en & 4) {
-		pr_info("src0_addr = %lx, w = %d, h = %d\n",
-			cs0.addr, cs0.width, cs0.height);
-		pr_info("src1_addr = %lx, w = %d, h = %d\n",
-			cs1.addr, cs1.width, cs1.height);
-		pr_info("src2_addr = %lx, w = %d, h = %d\n",
-			cs2.addr, cs2.width, cs2.height);
+		if (vf->canvas0Addr != (u32)-1) {
+			pr_info("src0_addr = %lx, w = %d, h = %d\n",
+				cs0.addr, cs0.width, cs0.height);
+			pr_info("src1_addr = %lx, w = %d, h = %d\n",
+				cs1.addr, cs1.width, cs1.height);
+			pr_info("src2_addr = %lx, w = %d, h = %d\n",
+				cs2.addr, cs2.width, cs2.height);
+		}
 		pr_info("output: w = %d, h = %d, output_canvas = %x\n\n",
 			output->width, output->height, output_canvas);
 
@@ -2607,18 +2771,58 @@ struct amlvideo2_node *node)
 	ge2d_config->src1_gb_alpha = 0;/* 0xff; */
 	ge2d_config->dst_xy_swap = 0;
 
-	canvas_read(vf->canvas0Addr & 0xff, &cs0);
-	canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
-	canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
-	ge2d_config->src_planes[0].addr = cs0.addr;
-	ge2d_config->src_planes[0].w = cs0.width;
-	ge2d_config->src_planes[0].h = cs0.height;
-	ge2d_config->src_planes[1].addr = cs1.addr;
-	ge2d_config->src_planes[1].w = cs1.width;
-	ge2d_config->src_planes[1].h = cs1.height;
-	ge2d_config->src_planes[2].addr = cs2.addr;
-	ge2d_config->src_planes[2].w = cs2.width;
-	ge2d_config->src_planes[2].h = cs2.height;
+	if (vf->canvas0Addr == (u32)-1) {
+		canvas_config_config(node->aml2_canvas[0],
+				     &vf->canvas0_config[0]);
+		if (vf->plane_num == 2) {
+			canvas_config_config(
+					     node->aml2_canvas[1],
+					     &vf->canvas0_config[1]);
+		} else if (vf->plane_num == 3) {
+			canvas_config_config(
+					     node->aml2_canvas[2],
+					     &vf->canvas0_config[2]);
+		}
+		ge2d_config->src_para.canvas_index =
+			node->aml2_canvas[0]
+			| (node->aml2_canvas[1] << 8)
+			| (node->aml2_canvas[2] << 16);
+		ge2d_config->src_planes[0].addr =
+				vf->canvas0_config[0].phy_addr;
+		ge2d_config->src_planes[0].w =
+				vf->canvas0_config[0].width;
+		ge2d_config->src_planes[0].h =
+				vf->canvas0_config[0].height;
+		ge2d_config->src_planes[1].addr =
+				vf->canvas0_config[1].phy_addr;
+		ge2d_config->src_planes[1].w =
+				vf->canvas0_config[1].width;
+		ge2d_config->src_planes[1].h =
+				vf->canvas0_config[1].height >> 1;
+		if (vf->plane_num == 3) {
+			ge2d_config->src_planes[2].addr =
+				vf->canvas0_config[2].phy_addr;
+			ge2d_config->src_planes[2].w =
+				vf->canvas0_config[2].width;
+			ge2d_config->src_planes[2].h =
+				vf->canvas0_config[2].height >> 1;
+		}
+	} else {
+		canvas_read(vf->canvas0Addr & 0xff, &cs0);
+		canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
+		canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
+		ge2d_config->src_planes[0].addr = cs0.addr;
+		ge2d_config->src_planes[0].w = cs0.width;
+		ge2d_config->src_planes[0].h = cs0.height;
+		ge2d_config->src_planes[1].addr = cs1.addr;
+		ge2d_config->src_planes[1].w = cs1.width;
+		ge2d_config->src_planes[1].h = cs1.height;
+		ge2d_config->src_planes[2].addr = cs2.addr;
+		ge2d_config->src_planes[2].w = cs2.width;
+		ge2d_config->src_planes[2].h = cs2.height;
+		ge2d_config->src_para.canvas_index = vf->canvas0Addr;
+	}
+
 	canvas_read(output_canvas & 0xff, &cd);
 	ge2d_config->dst_planes[0].addr = cd.addr;
 	ge2d_config->dst_planes[0].w = cd.width;
@@ -2626,7 +2830,6 @@ struct amlvideo2_node *node)
 	ge2d_config->src_key.key_enable = 0;
 	ge2d_config->src_key.key_mask = 0;
 	ge2d_config->src_key.key_mode = 0;
-	ge2d_config->src_para.canvas_index = vf->canvas0Addr;
 	ge2d_config->src_para.mem_type = CANVAS_TYPE_INVALID;
 	ge2d_config->src_para.format = get_interlace_input_format(vf, output);
 	ge2d_config->src_para.fill_color_en = 0;
@@ -2688,12 +2891,14 @@ struct amlvideo2_node *node)
 		return -1;
 	}
 	if (amlvideo2_dbg_en & 4) {
-		pr_info("src0_addr = %lx, w = %d, h = %d\n",
-			cs0.addr, cs0.width, cs0.height);
-		pr_info("src1_addr = %lx, w = %d, h = %d\n",
-			cs1.addr, cs1.width, cs1.height);
-		pr_info("src2_addr = %lx, w = %d, h = %d\n",
-			cs2.addr, cs2.width, cs2.height);
+		if (vf->canvas0Addr != (u32)-1) {
+			pr_info("src0_addr = %lx, w = %d, h = %d\n",
+				cs0.addr, cs0.width, cs0.height);
+			pr_info("src1_addr = %lx, w = %d, h = %d\n",
+				cs1.addr, cs1.width, cs1.height);
+			pr_info("src2_addr = %lx, w = %d, h = %d\n",
+				cs2.addr, cs2.width, cs2.height);
+		}
 		pr_info("output: w = %d, h = %d, output_canvas = %x\n\n",
 			output->width, output->height, output_canvas);
 
@@ -2885,18 +3090,58 @@ int amlvideo2_ge2d_multi_pre_process(struct vframe_s *vf,
 	ge2d_config->src1_gb_alpha = 0;/* 0xff; */
 	ge2d_config->dst_xy_swap = 0;
 
-	canvas_read(vf->canvas0Addr & 0xff, &cs0);
-	canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
-	canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
-	ge2d_config->src_planes[0].addr = cs0.addr;
-	ge2d_config->src_planes[0].w = cs0.width;
-	ge2d_config->src_planes[0].h = cs0.height;
-	ge2d_config->src_planes[1].addr = cs1.addr;
-	ge2d_config->src_planes[1].w = cs1.width;
-	ge2d_config->src_planes[1].h = cs1.height;
-	ge2d_config->src_planes[2].addr = cs2.addr;
-	ge2d_config->src_planes[2].w = cs2.width;
-	ge2d_config->src_planes[2].h = cs2.height;
+	if (vf->canvas0Addr == (u32)-1) {
+		canvas_config_config(node->aml2_canvas[0],
+				     &vf->canvas0_config[0]);
+		if (vf->plane_num == 2) {
+			canvas_config_config(
+					     node->aml2_canvas[1],
+					     &vf->canvas0_config[1]);
+		} else if (vf->plane_num == 3) {
+			canvas_config_config(
+					     node->aml2_canvas[2],
+					     &vf->canvas0_config[2]);
+		}
+		ge2d_config->src_para.canvas_index =
+			node->aml2_canvas[0]
+			| (node->aml2_canvas[1] << 8)
+			| (node->aml2_canvas[2] << 16);
+		ge2d_config->src_planes[0].addr =
+				vf->canvas0_config[0].phy_addr;
+		ge2d_config->src_planes[0].w =
+				vf->canvas0_config[0].width;
+		ge2d_config->src_planes[0].h =
+				vf->canvas0_config[0].height;
+		ge2d_config->src_planes[1].addr =
+				vf->canvas0_config[1].phy_addr;
+		ge2d_config->src_planes[1].w =
+				vf->canvas0_config[1].width;
+		ge2d_config->src_planes[1].h =
+				vf->canvas0_config[1].height >> 1;
+		if (vf->plane_num == 3) {
+			ge2d_config->src_planes[2].addr =
+				vf->canvas0_config[2].phy_addr;
+			ge2d_config->src_planes[2].w =
+				vf->canvas0_config[2].width;
+			ge2d_config->src_planes[2].h =
+				vf->canvas0_config[2].height >> 1;
+		}
+	} else {
+		canvas_read(vf->canvas0Addr & 0xff, &cs0);
+		canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
+		canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
+		ge2d_config->src_planes[0].addr = cs0.addr;
+		ge2d_config->src_planes[0].w = cs0.width;
+		ge2d_config->src_planes[0].h = cs0.height;
+		ge2d_config->src_planes[1].addr = cs1.addr;
+		ge2d_config->src_planes[1].w = cs1.width;
+		ge2d_config->src_planes[1].h = cs1.height;
+		ge2d_config->src_planes[2].addr = cs2.addr;
+		ge2d_config->src_planes[2].w = cs2.width;
+		ge2d_config->src_planes[2].h = cs2.height;
+		ge2d_config->src_para.canvas_index = vf->canvas0Addr;
+	}
+
 	canvas_read(output_canvas & 0xff, &cd);
 	ge2d_config->dst_planes[0].addr = cd.addr;
 	ge2d_config->dst_planes[0].w = cd.width;
@@ -2904,7 +3149,6 @@ int amlvideo2_ge2d_multi_pre_process(struct vframe_s *vf,
 	ge2d_config->src_key.key_enable = 0;
 	ge2d_config->src_key.key_mask = 0;
 	ge2d_config->src_key.key_mode = 0;
-	ge2d_config->src_para.canvas_index = vf->canvas0Addr;
 	ge2d_config->src_para.mem_type = CANVAS_TYPE_INVALID;
 	ge2d_config->src_para.format = get_input_format(vf);
 	ge2d_config->src_para.fill_color_en = 0;
@@ -3216,18 +3460,58 @@ int amlvideo2_ge2d_pre_process(struct vframe_s *vf,
 	ge2d_config->src1_gb_alpha = 0;/* 0xff; */
 	ge2d_config->dst_xy_swap = 0;
 
-	canvas_read(vf->canvas0Addr & 0xff, &cs0);
-	canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
-	canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
-	ge2d_config->src_planes[0].addr = cs0.addr;
-	ge2d_config->src_planes[0].w = cs0.width;
-	ge2d_config->src_planes[0].h = cs0.height;
-	ge2d_config->src_planes[1].addr = cs1.addr;
-	ge2d_config->src_planes[1].w = cs1.width;
-	ge2d_config->src_planes[1].h = cs1.height;
-	ge2d_config->src_planes[2].addr = cs2.addr;
-	ge2d_config->src_planes[2].w = cs2.width;
-	ge2d_config->src_planes[2].h = cs2.height;
+	if (vf->canvas0Addr == (u32)-1) {
+		canvas_config_config(node->aml2_canvas[0],
+				     &vf->canvas0_config[0]);
+		if (vf->plane_num == 2) {
+			canvas_config_config(
+					     node->aml2_canvas[1],
+					     &vf->canvas0_config[1]);
+		} else if (vf->plane_num == 3) {
+			canvas_config_config(
+					     node->aml2_canvas[2],
+					     &vf->canvas0_config[2]);
+		}
+		ge2d_config->src_para.canvas_index =
+			node->aml2_canvas[0]
+			| (node->aml2_canvas[1] << 8)
+			| (node->aml2_canvas[2] << 16);
+		ge2d_config->src_planes[0].addr =
+				vf->canvas0_config[0].phy_addr;
+		ge2d_config->src_planes[0].w =
+				vf->canvas0_config[0].width;
+		ge2d_config->src_planes[0].h =
+				vf->canvas0_config[0].height;
+		ge2d_config->src_planes[1].addr =
+				vf->canvas0_config[1].phy_addr;
+		ge2d_config->src_planes[1].w =
+				vf->canvas0_config[1].width;
+		ge2d_config->src_planes[1].h =
+				vf->canvas0_config[1].height >> 1;
+		if (vf->plane_num == 3) {
+			ge2d_config->src_planes[2].addr =
+				vf->canvas0_config[2].phy_addr;
+			ge2d_config->src_planes[2].w =
+				vf->canvas0_config[2].width;
+			ge2d_config->src_planes[2].h =
+				vf->canvas0_config[2].height >> 1;
+		}
+	} else {
+		canvas_read(vf->canvas0Addr & 0xff, &cs0);
+		canvas_read((vf->canvas0Addr >> 8) & 0xff, &cs1);
+		canvas_read((vf->canvas0Addr >> 16) & 0xff, &cs2);
+		ge2d_config->src_planes[0].addr = cs0.addr;
+		ge2d_config->src_planes[0].w = cs0.width;
+		ge2d_config->src_planes[0].h = cs0.height;
+		ge2d_config->src_planes[1].addr = cs1.addr;
+		ge2d_config->src_planes[1].w = cs1.width;
+		ge2d_config->src_planes[1].h = cs1.height;
+		ge2d_config->src_planes[2].addr = cs2.addr;
+		ge2d_config->src_planes[2].w = cs2.width;
+		ge2d_config->src_planes[2].h = cs2.height;
+		ge2d_config->src_para.canvas_index = vf->canvas0Addr;
+	}
+
 	canvas_read(output_canvas & 0xff, &cd);
 	ge2d_config->dst_planes[0].addr = cd.addr;
 	ge2d_config->dst_planes[0].w = cd.width;
@@ -3235,7 +3519,6 @@ int amlvideo2_ge2d_pre_process(struct vframe_s *vf,
 	ge2d_config->src_key.key_enable = 0;
 	ge2d_config->src_key.key_mask = 0;
 	ge2d_config->src_key.key_mode = 0;
-	ge2d_config->src_para.canvas_index = vf->canvas0Addr;
 	ge2d_config->src_para.mem_type = CANVAS_TYPE_INVALID;
 	ge2d_config->src_para.format = get_input_format(vf);
 	ge2d_config->src_para.fill_color_en = 0;
@@ -3297,12 +3580,14 @@ int amlvideo2_ge2d_pre_process(struct vframe_s *vf,
 		return -1;
 	}
 	if (amlvideo2_dbg_en & 4) {
-		pr_info("src0_addr = %lx, w = %d, h = %d\n",
-			cs0.addr, cs0.width, cs0.height);
-		pr_info("src1_addr = %lx, w = %d, h = %d\n",
-			cs1.addr, cs1.width, cs1.height);
-		pr_info("src2_addr = %lx, w = %d, h = %d\n",
-			cs2.addr, cs2.width, cs2.height);
+		if (vf->canvas0Addr != (u32)-1) {
+			pr_info("src0_addr = %lx, w = %d, h = %d\n",
+				cs0.addr, cs0.width, cs0.height);
+			pr_info("src1_addr = %lx, w = %d, h = %d\n",
+				cs1.addr, cs1.width, cs1.height);
+			pr_info("src2_addr = %lx, w = %d, h = %d\n",
+				cs2.addr, cs2.width, cs2.height);
+		}
 		pr_info("output: w = %d, h = %d, output_canvas = %x\n\n",
 			output->width, output->height, output_canvas);
 
@@ -3677,6 +3962,10 @@ static int amlvideo2_thread_tick(struct amlvideo2_fh *fh)
 		/* drop the frame to get the last one */
 		if (!vfq_full(&node->q_ready)) {
 			vf = vf_get(node->recv.name);
+			if (vf->type & VIDTYPE_V4L_EOS) {
+				vf_inqueue(vf, node);
+				goto unlock;
+			}
 			if ((vf != NULL) && ((vf->type & VIDTYPE_TYPEMASK)
 				== VIDTYPE_INTERLACE_TOP) &&
 				(node->field_flag)) {
@@ -3701,6 +3990,10 @@ static int amlvideo2_thread_tick(struct amlvideo2_fh *fh)
 					break;
 			}
 			if (vf != NULL) {
+				if (vf->type & VIDTYPE_V4L_EOS) {
+					vf_inqueue(vf, node);
+					goto unlock;
+				}
 				if (((vf->type & VIDTYPE_TYPEMASK)
 					== VIDTYPE_INTERLACE_BOTTOM) &&
 					(vf->canvas0Addr == vf->canvas1Addr)) {
@@ -4035,7 +4328,14 @@ static int amlvideo2_thread(void *data)
 	}
 		/*msleep(10);*/
 
-	node->tmp_vf = NULL;
+	if (node->tmp_vf != NULL) {
+		if ((node->recv.name != NULL) &&
+			(!vf_get_receiver(node->recv.name))) {
+			vf_put(node->tmp_vf, node->recv.name);
+		}
+		node->tmp_vf = NULL;
+	}
+
 	if (amlvideo2_dbg_en) {
 		if (node->vid == 0)
 			pr_info("amlvideo2.0 thread exit.\n");
@@ -4096,8 +4396,13 @@ static int amlvideo2_start_thread(struct amlvideo2_fh *fh)
 static void amlvideo2_stop_thread(struct amlvideo2_node_dmaqueue *dma_q)
 {
 	int ret = 0;
-	struct amlvideo2_node *node =
-		container_of(dma_q, struct amlvideo2_node, vidq);
+	struct amlvideo2_node *node;
+
+	if (IS_ERR_OR_NULL(dma_q)) {
+		pr_info("dma_q is NULL\n");
+		return;
+	}
+	node = container_of(dma_q, struct amlvideo2_node, vidq);
 	dpr_err(node->vid_dev, 1, "%s\n", __func__);
 	if (amlvideo2_dbg_en & 1) {
 		if (node->vid == 0)
@@ -4107,7 +4412,7 @@ static void amlvideo2_stop_thread(struct amlvideo2_node_dmaqueue *dma_q)
 	}
 	mutex_lock(&node->mutex);
 	/* shutdown control thread */
-	if (!IS_ERR(dma_q->kthread)) {
+	if (!IS_ERR_OR_NULL(dma_q->kthread)) {
 		dma_q->task_running = 0;
 		send_sig(SIGTERM, dma_q->kthread, 1);
 	#ifdef USE_SEMA_QBUF
@@ -5352,9 +5657,59 @@ static int vidioc_s_output(struct file *file, void *fh,
 	return 0;
 }
 
+static int alloc_canvas(struct amlvideo2_node *node)
+{
+	const char *keep_owner = "amlvideo2";
+
+	if (node->aml2_canvas[0] < 0)
+		node->aml2_canvas[0] =
+			canvas_pool_map_alloc_canvas(keep_owner);
+	if (node->aml2_canvas[1] < 0)
+		node->aml2_canvas[1] =
+			canvas_pool_map_alloc_canvas(keep_owner);
+	if (node->aml2_canvas[2] < 0)
+		node->aml2_canvas[2] =
+			canvas_pool_map_alloc_canvas(keep_owner);
+
+	if ((node->aml2_canvas[0] < 0) ||
+	    (node->aml2_canvas[1] < 0) ||
+	    (node->aml2_canvas[2] < 0)) {
+		pr_err("amlvideo2 canvas alloc failed\n");
+		return -1;
+	}
+	return 0;
+}
+
+static int free_canvas(struct amlvideo2_node *node)
+{
+	if (node->aml2_canvas[0] >= 0) {
+		canvas_pool_map_free_canvas(node->aml2_canvas[0]);
+		node->aml2_canvas[0] = -1;
+	}
+
+	if (node->aml2_canvas[1] >= 0) {
+		canvas_pool_map_free_canvas(node->aml2_canvas[1]);
+		node->aml2_canvas[1] = -1;
+	}
+
+	if (node->aml2_canvas[2] >= 0) {
+		canvas_pool_map_free_canvas(node->aml2_canvas[2]);
+		node->aml2_canvas[2] = -1;
+	}
+
+	if ((node->aml2_canvas[0] >= 0) ||
+	    (node->aml2_canvas[1] >= 0) ||
+	    (node->aml2_canvas[2] >= 0)) {
+		pr_err("amlvideo2 canvas free failed!\n");
+		return -1;
+	}
+	return 0;
+}
+
 int amlvideo2_cma_buf_init(struct amlvideo2_device *vid_dev,  int node_id)
 {
 	int flags;
+	int ret;
 
 	if (!vid_dev->use_reserve) {
 		if (vid_dev->cma_mode == 0) {
@@ -5372,6 +5727,12 @@ int amlvideo2_cma_buf_init(struct amlvideo2_device *vid_dev,  int node_id)
 		} else {
 			flags = CODEC_MM_FLAGS_DMA |
 				CODEC_MM_FLAGS_CMA_CLEAR;
+			ret = alloc_canvas(vid_dev->node[node_id]);
+			if (ret < 0) {
+				pr_err("amlvideo2 alloc cma failed!\n");
+				return -1;
+			}
+
 			if (node_id == 0) {
 				if (vid_dev->node[node_id]->
 					ge2d_multi_process_flag == 1)
@@ -5430,6 +5791,7 @@ int amlvideo2_cma_buf_init(struct amlvideo2_device *vid_dev,  int node_id)
 
 int amlvideo2_cma_buf_uninit(struct amlvideo2_device *vid_dev, int node_id)
 {
+	int ret;
 	if (!vid_dev->use_reserve) {
 		if (vid_dev->cma_mode == 0) {
 			if (vid_dev->cma_pages) {
@@ -5440,6 +5802,10 @@ int amlvideo2_cma_buf_uninit(struct amlvideo2_device *vid_dev, int node_id)
 				vid_dev->cma_pages = NULL;
 			}
 		} else {
+			ret = free_canvas(vid_dev->node[node_id]);
+			if (ret < 0)
+				pr_err("%s free canvas fail! line: %d",
+				       __func__, __LINE__);
 			if (vid_dev->buffer_start != 0) {
 				if (node_id == 0) {
 					codec_mm_free_for_dma(
@@ -5822,6 +6188,7 @@ static int amlvideo2_release_node(struct amlvideo2_device *vid_dev)
 {
 	int i = 0;
 	struct video_device *vfd = NULL;
+	int ret;
 
 	for (i = 0; i < vid_dev->node_num; i++) {
 		if (vid_dev->node[i]) {
@@ -5834,6 +6201,10 @@ static int amlvideo2_release_node(struct amlvideo2_device *vid_dev)
 			kfree(vid_dev->node[i]->fh);
 			kfree(vid_dev->node[i]->amlvideo2_pool_ready);
 			vid_dev->node[i]->fh = NULL;
+			ret = free_canvas(vid_dev->node[i]);
+			if (ret < 0)
+				pr_err("%s free canvas failed! line: %d\n",
+				       __func__, __LINE__);
 			kfree(vid_dev->node[i]);
 			vid_dev->node[i] = NULL;
 		}
@@ -5855,7 +6226,6 @@ static int amlvideo2_create_node(struct platform_device *pdev, int node_id)
 	struct amlvideo2_device *vid_dev = container_of(v4l2_dev,
 		struct amlvideo2_device,
 		v4l2_dev);
-	pr_info("amlvideo2_create_node");
 	vid_dev->node_num = pdev->num_resources;
 	if (vid_dev->node_num > MAX_SUB_DEV_NODE)
 		vid_dev->node_num = MAX_SUB_DEV_NODE;
@@ -5890,7 +6260,7 @@ static int amlvideo2_create_node(struct platform_device *pdev, int node_id)
 	vid_node->amlvideo2_pool_ready = NULL;
 	vid_node->amlvideo2_pool_size = 12;
 	vid_node->amlvideo2_pool_ready =
-		kmalloc((sizeof(struct vframe_s *) *
+		kmalloc((sizeof(struct vframe_s) *
 		(vid_node->amlvideo2_pool_size)),
 		GFP_KERNEL);
 	if (!vid_node->amlvideo2_pool_ready) {
@@ -5980,9 +6350,14 @@ static int amlvideo2_create_node(struct platform_device *pdev, int node_id)
 	vid_node->field_condition_flag = false;
 	vid_node->ge2d_multi_process_flag = false;
 	vid_node->r_type = AML_RECEIVER_NONE;
+	vid_node->aml2_canvas[0] = -1;
+	vid_node->aml2_canvas[1] = -1;
+	vid_node->aml2_canvas[2] = -1;
 	vid_dev->node[node_id] = vid_node;
-	v4l2_info(&vid_dev->v4l2_dev, "V4L2 device registered as %s\n",
-		video_device_node_name(vfd));
+	if (vid_dev->node_num == node_id + 1)
+		v4l2_info(&vid_dev->v4l2_dev,
+			  "V4L2 device registered as %s\n",
+			  video_device_node_name(vfd));
 	gAmlvideo2_Node[node_id] = vid_node;
 
 	if (ret)
@@ -6004,8 +6379,6 @@ static int amlvideo2_driver_probe(struct platform_device *pdev)
 	memset(dev, 0, sizeof(struct amlvideo2_device));
 	snprintf(dev->v4l2_dev.name, sizeof(dev->v4l2_dev.name), "%s",
 			AVMLVIDEO2_MODULE_NAME);
-
-	pr_err("amlvideo2 probe called\n");
 
 	pdev->num_resources = MAX_SUB_DEV_NODE;
 	platform_set_drvdata(pdev, &(dev->v4l2_dev));

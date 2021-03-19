@@ -18,7 +18,7 @@
 /dts-v1/;
 
 #include "mesong12a.dtsi"
-#include "partition_mbox_normal.dtsi"
+#include "partition_mbox_normal_dynamic.dtsi"
 #include "mesong12a_skt-panel.dtsi"
 
 / {
@@ -57,9 +57,10 @@
 		ramoops@0x07400000 {
 			compatible = "ramoops";
 			reg = <0x07400000 0x00100000>;
-			record-size = <0x8000>;
-			console-size = <0x8000>;
-			ftrace-size = <0x20000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x80000>;
+			pmsg-size = <0x20000>;
 		};
 
 		secmon_reserved:linux,secmon {
@@ -137,21 +138,14 @@
 			alignment = <0x100000>;
 			//no-map;
 		};
-		/*  vdin0 CMA pool */
-		vdin0_cma_reserved:linux,vdin0_cma {
-			compatible = "shared-dma-pool";
-			reusable;
-		/* 1920x1080x2x4  =16+4 M */
-			size = <0x04000000>;
-			alignment = <0x400000>;
-			alloc-ranges = <0x0 0x30000000>;
-		};
 		/*  vdin1 CMA pool */
 		vdin1_cma_reserved:linux,vdin1_cma {
 			compatible = "shared-dma-pool";
 			reusable;
-			/* 1920x1080x2x4  =16 M */
-			size = <0x04000000>;
+			/* up to 1920x1080 yuv422 8bit and 5 buffers
+			 * 1920x1080x2x5 = 20 M
+			 */
+			size = <0x01400000>;
 			alignment = <0x400000>;
 			alloc-ranges = <0x0 0x30000000>;
 		};
@@ -161,6 +155,13 @@
 			size = <0x2000000>;
 			alignment = <0x400000>;
 		};
+	};
+
+	cma_shrinker {
+		compatible = "amlogic, cma-shrinker";
+		status = "okay";
+		adj  = <0 100 200 250 900 950>;
+		free = <7680 24288 28528 32600 32768 36624>;
 	};
 
 	gpioleds {
@@ -307,6 +308,23 @@
 		dev_name = "ionvideo";
 		status = "okay";
 	};
+
+	amlvideo2_0 {
+		compatible = "amlogic, amlvideo2";
+		dev_name = "amlvideo2";
+		status = "okay";
+		amlvideo2_id = <0>;
+		cma_mode = <1>;
+	};
+
+	amlvideo2_1 {
+		compatible = "amlogic, amlvideo2";
+		dev_name = "amlvideo2";
+		status = "okay";
+		amlvideo2_id = <1>;
+		cma_mode = <1>;
+	};
+
 	vm0 {
 		compatible = "amlogic, vm";
 		memory-region = <&vm0_cma_reserved>;
@@ -383,7 +401,7 @@
 	unifykey{
 		compatible = "amlogic, unifykey";
 		status = "ok";
-		unifykey-num = <17>;
+		unifykey-num = <19>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -401,6 +419,8 @@
 		unifykey-index-14= <&keysn_14>;
 		unifykey-index-15= <&keysn_15>;
 		unifykey-index-16= <&keysn_16>;
+		unifykey-index-17= <&keysn_17>;
+		unifykey-index-18= <&keysn_18>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -488,6 +508,16 @@
 		keysn_16:key_16{
 			key-name = "netflix_mgkid";
 			key-device = "secure";
+			key-permit = "read","write","del";
+		};
+		keysn_17:key_17{
+			key-name = "attestationdevidbox";// attest dev id box
+			key-device = "secure";
+			key-permit = "read","write","del";
+		};
+		keysn_18:key_18{
+			key-name = "oemkey";
+			key-device = "normal";
 			key-permit = "read","write","del";
 		};
 	};//End unifykey
@@ -706,7 +736,7 @@
 			/* suffix-name, sync with android audio hal
 			 * what's the dai link used for
 			 */
-			suffix-name = "alsaPORT-spdifb2hdmi";
+			suffix-name = "alsaPORT-spdifb";
 			cpu {
 				sound-dai = <&aml_spdif_b>;
 				system-clock-frequency = <6144000>;
@@ -838,7 +868,7 @@
 	status = "okay";
 	display_size_default = <1920 1080 1920 2160 32>;
 	mem_size = <0x00800000 0x1980000 0x100000 0x100000 0x800000>;
-	logo_addr = "0x7f800000";
+	logo_addr = "0x3f800000";
 	mem_alloc = <0>;
 	pxp_mode = <0>; /** 0:normal mode 1:pxp mode */
 };
@@ -1357,8 +1387,12 @@
 
 /*if you want to use vdin just modify status to "ok"*/
 &vdin0 {
-	memory-region = <&vdin0_cma_reserved>;
+	/*memory-region = <&vdin0_cma_reserved>;*/
 	status = "okay";
+	/* up to 1920x1080 yuv422 8bit and 5 buffers
+	 * 1920x1080x2x5 = 20 M
+	 */
+	cma_size = <20>;
 	/*vdin write mem color depth support:
 	 *bit0:support 8bit
 	 *bit1:support 9bit
@@ -1366,7 +1400,7 @@
 	 *bit3:support 12bit
 	 *bit4:support yuv422 10bit full pack mode (from txl new add)
 	 */
-	tv_bit_mode = <0x15>;
+	tv_bit_mode = <0x1>;
 };
 &vdin1 {
 	memory-region = <&vdin1_cma_reserved>;

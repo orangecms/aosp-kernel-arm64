@@ -1185,6 +1185,7 @@ static ssize_t ffs_epfile_io(struct file *file, struct ffs_io_data *io_data)
 			 * condition with req->complete callback.
 			 */
 			usb_ep_dequeue(ep->ep, req);
+			wait_for_completion(&done);
 			interrupted = ep->status < 0;
 		}
 
@@ -1718,19 +1719,10 @@ ffs_fs_mount(struct file_system_type *t, int flags,
 static void
 ffs_fs_kill_sb(struct super_block *sb)
 {
-#ifdef CONFIG_AMLOGIC_USB
-	struct ffs_data *ffs = sb->s_fs_info;
-#endif
-
 	ENTER();
 
 	kill_litter_super(sb);
 	if (sb->s_fs_info) {
-#ifdef CONFIG_AMLOGIC_USB
-		kfree(ffs->data_ep0);
-		ffs->data_ep0 = NULL;
-		ffs_free_buffer(ffs);
-#endif
 		ffs_release_dev(sb->s_fs_info);
 		ffs_data_closed(sb->s_fs_info);
 	}
@@ -1801,6 +1793,11 @@ static void ffs_data_put(struct ffs_data *ffs)
 
 	if (unlikely(atomic_dec_and_test(&ffs->ref))) {
 		pr_info("%s(): freeing\n", __func__);
+#ifdef CONFIG_AMLOGIC_USB
+		kfree(ffs->data_ep0);
+		ffs->data_ep0 = NULL;
+		ffs_free_buffer(ffs);
+#endif
 		ffs_data_clear(ffs);
 		BUG_ON(waitqueue_active(&ffs->ev.waitq) ||
 		       waitqueue_active(&ffs->ep0req_completion.wait));
@@ -3450,7 +3447,7 @@ static int ffs_func_setup(struct usb_function *f,
 	__ffs_event_add(ffs, FUNCTIONFS_SETUP);
 	spin_unlock_irqrestore(&ffs->ev.waitq.lock, flags);
 
-	return USB_GADGET_DELAYED_STATUS;
+	return creq->wLength == 0 ? USB_GADGET_DELAYED_STATUS : 0;
 }
 
 static bool ffs_func_req_match(struct usb_function *f,

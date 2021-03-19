@@ -52,6 +52,8 @@
 static unsigned long stack_shrink_jiffies;
 static unsigned char vmap_shrink_enable;
 static atomic_t vmap_stack_size;
+static atomic_t vmap_fault_count;
+static atomic_t vmap_pre_handle_count;
 static struct aml_vmap *avmap;
 
 #ifdef CONFIG_ARM64
@@ -97,7 +99,7 @@ bool on_vmap_stack(unsigned long sp, int cpu)
 void notrace __setup_vmap_stack(unsigned long cpu)
 {
 	void *stack;
-
+#define VMAP_MASK		(GFP_ATOMIC | __GFP_ZERO)
 #ifdef CONFIG_THUMB2_KERNEL
 #define TAG	"r"
 #else
@@ -105,10 +107,11 @@ void notrace __setup_vmap_stack(unsigned long cpu)
 #endif
 	stack = vmap_stack[cpu];
 	if (!stack) {
-		stack = kmalloc(THREAD_SIZE, GFP_ATOMIC | __GFP_ZERO);
+		stack = (void *)__get_free_pages(VMAP_MASK, THREAD_SIZE_ORDER);
 		WARN_ON(!stack);
 		vmap_stack[cpu] = stack;
-		irq_stack[cpu] = kmalloc(THREAD_SIZE, GFP_ATOMIC | __GFP_ZERO);
+		irq_stack[cpu] = (void *)__get_free_pages(VMAP_MASK,
+							  THREAD_SIZE_ORDER);
 		WARN_ON(!irq_stack[cpu]);
 	}
 
@@ -163,9 +166,9 @@ unsigned long notrace irq_stack_entry(unsigned long sp)
 		sp_irq = (unsigned long)dst - 8;
 		/*
 		 * save start addr of the interrupted task's context
-		 * minus an extra 12 to force base sp 16Bytes aligned
+		 * used to back trace stack call from irq
+		 * Note: sp_irq must be aligned to 16 bytes
 		 */
-		sp_irq = sp_irq - sizeof(sp) - 12;
 		*((unsigned long *)sp_irq) = sp;
 		return sp_irq;
 	}
@@ -179,12 +182,12 @@ unsigned long notrace pmd_check(unsigned long addr, unsigned long far)
 	pud_t *pud, *pud_k;
 	pmd_t *pmd, *pmd_k;
 
-	if (addr < TASK_SIZE)
+	if (far < TASK_SIZE)
 		return addr;
 
-	index = pgd_index(addr);
+	index = pgd_index(far);
 
-	pgd = cpu_get_pgd() + index;
+	pgd   = cpu_get_pgd() + index;
 	pgd_k = init_mm.pgd + index;
 
 	if (pgd_none(*pgd_k))
@@ -192,16 +195,16 @@ unsigned long notrace pmd_check(unsigned long addr, unsigned long far)
 	if (!pgd_present(*pgd))
 		set_pgd(pgd, *pgd_k);
 
-	pud = pud_offset(pgd, addr);
-	pud_k = pud_offset(pgd_k, addr);
+	pud   = pud_offset(pgd, far);
+	pud_k = pud_offset(pgd_k, far);
 
 	if (pud_none(*pud_k))
 		goto bad_area;
 	if (!pud_present(*pud))
 		set_pud(pud, *pud_k);
 
-	pmd = pmd_offset(pud, addr);
-	pmd_k = pmd_offset(pud_k, addr);
+	pmd   = pmd_offset(pud, far);
+	pmd_k = pmd_offset(pud_k, far);
 
 #ifdef CONFIG_ARM_LPAE
 	/*
@@ -217,7 +220,7 @@ unsigned long notrace pmd_check(unsigned long addr, unsigned long far)
 	 * pmd_none() check for the entry really corresponded to address, not
 	 * for the first of pair.
 	 */
-	index = (addr >> SECTION_SHIFT) & 1;
+	index = (far >> SECTION_SHIFT) & 1;
 #endif
 	if (pmd_none(pmd_k[index]))
 		goto bad_area;
@@ -259,7 +262,7 @@ static struct page *get_vmap_cached_page(int *remain)
 	return page;
 }
 
-static struct page *check_pte_exist(unsigned long addr)
+struct page *check_pte_exist(unsigned long addr)
 {
 	struct mm_struct *mm;
 	pgd_t *pgd;
@@ -445,7 +448,7 @@ static void check_sp_fault_again(struct pt_regs *regs)
 {
 	unsigned long sp = 0, addr;
 	struct page *page;
-	int cache;
+	int cache = 0;
 
 #ifdef CONFIG_ARM
 	sp = regs->ARM_sp;
@@ -453,6 +456,18 @@ static void check_sp_fault_again(struct pt_regs *regs)
 	sp = regs->sp;
 #endif
 	addr = sp - sizeof(*regs);
+
+	/*
+	 * When we handle vmap stack fault, we are in pre-allcated
+	 * per-cpu vmap stack. But if sp is near bottom of a page and we
+	 * return to normal handler, sp may down grow to another page
+	 * to cause a vmap fault again. So we need map next page for
+	 * stack before page-fault happen.
+	 *
+	 * But we need check sp is realy in vmap stack range.
+	 */
+	if (!is_vmap_addr(addr)) /* addr may in linear mapping */
+		return;
 
 	if (sp && ((addr & PAGE_MASK) != (sp & PAGE_MASK))) {
 		/*
@@ -477,6 +492,7 @@ static void check_sp_fault_again(struct pt_regs *regs)
 			mod_delayed_work(system_highpri_wq, &avmap->mwork, 0);
 
 		D("map page:%5lx for addr:%lx\n", page_to_pfn(page), addr);
+		atomic_inc(&vmap_pre_handle_count);
 	#if DEBUG
 		show_fault_stack(addr, regs);
 	#endif
@@ -557,6 +573,7 @@ int handle_vmap_fault(unsigned long addr, unsigned int esr,
 	if (cache <= (VMAP_CACHE_PAGE / 2))
 		mod_delayed_work(system_highpri_wq, &avmap->mwork, 0);
 
+	atomic_inc(&vmap_fault_count);
 	D("map page:%5lx for addr:%lx\n", page_to_pfn(page), addr);
 #if DEBUG
 	show_fault_stack(addr, regs);
@@ -584,6 +601,20 @@ static int shrink_vm_stack(unsigned long low, unsigned long high)
 		pages++;
 	}
 	return pages;
+}
+
+void arch_report_meminfo(struct seq_file *m)
+{
+	unsigned long kb = 1 << (PAGE_SHIFT - 10);
+	unsigned long tmp1, tmp2, tmp3;
+
+	tmp1 = kb * atomic_read(&vmap_stack_size);
+	tmp2 = kb * atomic_read(&vmap_fault_count);
+	tmp3 = kb * atomic_read(&vmap_pre_handle_count);
+
+	seq_printf(m, "VmapStack:      %8ld kB\n", tmp1);
+	seq_printf(m, "VmapFault:      %8ld kB\n", tmp2);
+	seq_printf(m, "VmapPfault:     %8ld kB\n", tmp3);
 }
 
 static unsigned long get_task_stack_floor(unsigned long sp)
@@ -740,7 +771,7 @@ void *aml_stack_alloc(int node, struct task_struct *tsk)
 		 * if vmap address space is full, we still need to try
 		 * to get stack from kmalloc
 		 */
-		addr = (unsigned long)kmalloc(THREAD_SIZE, GFP_KERNEL);
+		addr = __get_free_pages(THREAD_SIZE_ORDER, GFP_KERNEL);
 		E("BITMAP FULL, kmalloc task stack:%lx\n", addr);
 		return (void *)addr;
 	}
@@ -784,7 +815,7 @@ void aml_stack_free(struct task_struct *tsk)
 
 	if (unlikely(!is_vmap_addr(stack))) {
 		/* stack get from kmalloc */
-		kfree((void *)stack);
+		free_pages(stack, THREAD_SIZE_ORDER);
 		return;
 	}
 

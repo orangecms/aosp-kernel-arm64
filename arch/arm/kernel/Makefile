@@ -30,6 +30,7 @@ else
 obj-y		+= entry-armv.o
 endif
 
+obj-$(CONFIG_MMU)		+= bugs.o
 obj-$(CONFIG_CPU_IDLE)		+= cpuidle.o
 obj-$(CONFIG_ISA_DMA_API)	+= dma.o
 obj-$(CONFIG_FIQ)		+= fiq.o fiqasm.o
@@ -96,3 +97,6 @@ endif
 obj-$(CONFIG_HAVE_ARM_SMCCC)	+= smccc-call.o
 
 extra-y := $(head-y) vmlinux.lds
+
+KASAN_SANITIZE_process.o := n
+KASAN_SANITIZE_unwind.o := n

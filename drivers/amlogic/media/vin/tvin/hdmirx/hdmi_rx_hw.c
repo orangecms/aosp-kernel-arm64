@@ -35,6 +35,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/amlogic/media/frame_provider/tvin/tvin.h>
+#include <linux/amlogic/media/vout/vdac_dev.h>
 #include <linux/arm-smccc.h>
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
@@ -85,7 +86,7 @@ MODULE_PARM_DESC(hdcp22_on, "\n hdcp22_on\n");
 module_param(hdcp22_on, int, 0664);
 
 /* test for HBR CTS, audio module can set it to force 8ch */
-int hbr_force_8ch = 1;
+int hbr_force_8ch;
 /*
  * hdcp14_key_mode:hdcp1.4 key handle method select
  * NORMAL_MODE:systemcontrol path
@@ -101,6 +102,11 @@ int pll_rst_max = 5;
 /* cdr lock threshold */
 int cdr_lock_level;
 int clock_lock_th = 2;
+int scdc_force_en = 1;
+/* for hdcp_hpd debug, disable by default */
+bool hdcp_hpd_ctrl_en;
+int eq_dbg_lvl;
+
 /*------------------------variable define end------------------------------*/
 
 static int check_regmap_flag(unsigned int addr)
@@ -968,6 +974,8 @@ void rx_get_audinfo(struct aud_info_s *audio_info)
 			audio_info->n/128;
 	} else
 		audio_info->arc = 0;
+
+	audio_info->aud_clk = rx_measure_clock(MEASURE_CLK_AUD_PLL);
 }
 
 /*
@@ -1598,8 +1606,12 @@ int rx_set_port_hpd(uint8_t port_id, bool val)
 	return 0;
 }
 
-void rx_set_cur_hpd(uint8_t val)
+/* add param to differentiate repeater/main state machine/etc
+ * 0: main loop; 2: workaround; 3: repeater flow; 4: special use
+ */
+void rx_set_cur_hpd(u8 val, u8 func)
 {
+	rx_pr("func-%d to", func);
 	rx_set_port_hpd(rx.port, val);
 }
 
@@ -1701,7 +1713,8 @@ void control_reset(void)
 void rx_esm_tmdsclk_en(bool en)
 {
 	hdmirx_wr_bits_top(TOP_CLK_CNTL, HDCP22_TMDSCLK_EN, en);
-
+	if (hdcp22_on && hdcp_hpd_ctrl_en)
+		hdmirx_hdcp22_hpd(en);
 	if (log_level & HDCP_LOG)
 		rx_pr("%s:%d\n", __func__, en);
 }
@@ -1804,7 +1817,6 @@ void hdmirx_hdcp22_hpd(bool value)
  */
 void hdcp_22_off(void)
 {
-	hdcp22_clk_en(0);
 	/* note: can't pull down hpd before enter suspend */
 	/* it will stop cec wake up func if EE domain still working */
 	/* rx_set_cur_hpd(0); */
@@ -1815,6 +1827,7 @@ void hdcp_22_off(void)
 		hdmirx_hdcp22_esm_rst();
 	else
 		hdcp22_kill_esm = 0;
+	hdcp22_clk_en(0);
 	rx_pr("hdcp22 off\n");
 }
 
@@ -1941,6 +1954,8 @@ void clk_init(void)
 void hdmirx_20_init(void)
 {
 	unsigned long data32;
+	unsigned long scdc_en =
+		scdc_force_en ? 1 : rx.edid_ver;
 
 	data32 = 0;
 	data32 |= 1	<< 12; /* [12]     vid_data_checken */
@@ -1948,7 +1963,7 @@ void hdmirx_20_init(void)
 	data32 |= 1	<< 10; /* [10]     gb_checken */
 	data32 |= 1	<< 9;  /* [9]      preamb_checken */
 	data32 |= 1	<< 8;  /* [8]      ctrl_checken */
-	data32 |= 1	<< 4;  /* [4]      scdc_enable */
+	data32 |= scdc_en	<< 4;  /* [4]      scdc_enable */
 	/* To support some TX that sends out SSCP even when not scrambling:
 	 * 0: Original behaviour
 	 * 1: During TMDS character error detection, treat SSCP character
@@ -1975,8 +1990,8 @@ void hdmirx_20_init(void)
 	hdmirx_wr_dwc(DWC_SCDC_I2CCONFIG,    data32);
 
 	data32  = 0;
-	data32 |= 0    << 1;  /* [1]      hpd_low */
-	data32 |= 1    << 0;  /* [0]      power_provided */
+	data32 |= 1    << 1;  /* [1]      hpd_low */
+	data32 |= 0    << 0;  /* [0]      power_provided */
 	hdmirx_wr_dwc(DWC_SCDC_CONFIG,   data32);
 
 	data32  = 0;
@@ -1990,10 +2005,15 @@ void hdmirx_20_init(void)
 	hdmirx_wr_dwc(DWC_CHLOCK_CONFIG, data32);
 
 	/* hdcp2.2 ctl */
-	if (hdcp22_on)
-		hdmirx_wr_dwc(DWC_HDCP22_CONTROL, 0x1000);
-	else
+	if (hdcp22_on) {
+		/* set hdcp_hpd high later */
+		if (hdcp_hpd_ctrl_en)
+			hdmirx_wr_dwc(DWC_HDCP22_CONTROL, 0);
+		else
+			hdmirx_wr_dwc(DWC_HDCP22_CONTROL, 0x1000);
+	} else {
 		hdmirx_wr_dwc(DWC_HDCP22_CONTROL, 2);
+	}
 }
 
 
@@ -2121,7 +2141,7 @@ int hdmirx_audio_init(void)
 	hdmirx_wr_dwc(DWC_PDEC_ACRM_CTRL, data32);
 
 	/* unsupport HBR serial mode. invalid bit */
-	/* hdmirx_wr_bits_dwc(DWC_AUD_CTRL, DWC_AUD_HBR_ENABLE, 1); */
+	hdmirx_wr_bits_dwc(DWC_AUD_CTRL, DWC_AUD_HBR_ENABLE, 1);
 
 	/* SAO cfg, disable I2S output, no use */
 	data32 = 0;
@@ -2350,7 +2370,7 @@ void hdmirx_load_firm_reset(int type)
 	rx.firm_change = 1;
 	msleep(20);
 	/*External_Mute(1);rx_aud_pll_ctl(0);*/
-	rx_set_cur_hpd(0);
+	rx_set_cur_hpd(0, 4);
 	/*type 2 only pull down hpd*/
 	if (type == 2) {
 		downstream_hpd_flag = 0;
@@ -2383,9 +2403,26 @@ void hdmirx_load_firm_reset(int type)
  */
 void rx_audio_bandgap_rst(void)
 {
-	vdac_enable(0, 0x10);
-	udelay(20);
-	vdac_enable(1, 0x10);
+	if (rx.chip_id >= CHIP_ID_TL1)
+		return;
+
+	wr_reg_hhi_bits(HHI_VDAC_CNTL0_TXLX, _BIT(13), 1);
+	udelay(10);
+	wr_reg_hhi_bits(HHI_VDAC_CNTL0_TXLX, _BIT(13), 0);
+	if (log_level & AUDIO_LOG)
+		rx_pr("%s\n", __func__);
+}
+
+void rx_audio_bandgap_en(void)
+{
+	if (rx.chip_id >= CHIP_ID_TL1)
+		return;
+
+	wr_reg_hhi_bits(HHI_VDAC_CNTL0_TXLX, _BIT(9), 1);
+	wr_reg_hhi_bits(HHI_VDAC_CNTL0_TXLX, _BIT(13), 1);
+	udelay(10);
+	wr_reg_hhi_bits(HHI_VDAC_CNTL0_TXLX, _BIT(13), 0);
+
 	if (log_level & AUDIO_LOG)
 		rx_pr("%s\n", __func__);
 }
@@ -2522,7 +2559,7 @@ bool is_afifo_error(void)
 bool is_aud_pll_error(void)
 {
 	bool ret = true;
-	int32_t clk = rx_measure_clock(MEASURE_CLK_AUD_PLL);
+	u32 clk = rx.aud_info.aud_clk;
 	int32_t aud_128fs = rx.aud_info.real_sr * 128;
 	int32_t aud_512fs = rx.aud_info.real_sr * 512;
 
@@ -2548,9 +2585,6 @@ void rx_aud_pll_ctl(bool en)
 	if (rx.chip_id >= CHIP_ID_TL1) {
 		if (en) {
 			/* AUD_CLK=N/CTS*TMDS_CLK */
-			/* bandgap enable */
-			wr_reg_hhi(HHI_VDAC_CNTL0, 0x906001);
-			wr_reg_hhi(HHI_VDAC_CNTL1, 0x0);
 			wr_reg_hhi(HHI_AUD_PLL_CNTL, 0x40001540);
 			#if 1
 			/* use mpll */
@@ -2579,6 +2613,7 @@ void rx_aud_pll_ctl(bool en)
 		}
 	} else {
 		if (en) {
+			rx_audio_bandgap_en();
 			tmp = hdmirx_rd_phy(PHY_MAINFSM_STATUS1);
 			wr_reg_hhi(HHI_AUD_PLL_CNTL, 0x20000000);
 			/* audio pll div depends on input freq */
@@ -2759,12 +2794,24 @@ void hdmirx_set_video_mute(bool mute)
 		rx_pr("%s-mute:%d\n", __func__, mute);
 }
 
+void set_dv_ll_mode(bool en)
+{
+	if (en) {
+		hdmirx_wr_bits_top(TOP_VID_CNTL, _BIT(17), 1);
+		hdmirx_wr_bits_top(TOP_VID_CNTL, _BIT(19), 1);
+	} else {
+		hdmirx_wr_bits_top(TOP_VID_CNTL, _BIT(17), 0);
+		hdmirx_wr_bits_top(TOP_VID_CNTL, _BIT(19), 0);
+	}
+}
+
 /*
  * hdmirx_config_video - video mute config
  */
 void hdmirx_config_video(void)
 {
 	hdmirx_set_video_mute(0);
+	set_dv_ll_mode(false);
 }
 
 /*
@@ -3011,7 +3058,7 @@ void rx_debug_load22key(void)
 	if (ret) {
 		rx_pr("load 2.2 key\n");
 		sm_pause = 1;
-		rx_set_cur_hpd(0);
+		rx_set_cur_hpd(0, 4);
 		hdcp22_on = 1;
 		hdcp22_kill_esm = 1;
 		while (wait_kill_done_cnt++ < 10) {
@@ -3033,11 +3080,11 @@ void rx_debug_load22key(void)
 		extcon_set_state_sync(rx.rx_excton_rx22,
 			EXTCON_DISP_HDMI, 1);
 		mdelay(100);
-		hdmirx_hw_config();
 		hdmi_rx_top_edid_update();
+		hdmirx_hw_config();
 		hpd_to_esm = 1;
 		/* mdelay(900); */
-		rx_set_cur_hpd(1);
+		rx_set_cur_hpd(1, 4);
 		sm_pause = 0;
 	}
 }
@@ -3045,8 +3092,8 @@ void rx_debug_load22key(void)
 void rx_debug_loadkey(void)
 {
 	rx_pr("load hdcp key\n");
-	hdmirx_hw_config();
 	hdmi_rx_top_edid_update();
+	hdmirx_hw_config();
 	pre_port = 0xfe;
 }
 
@@ -3181,9 +3228,9 @@ void dump_edid_reg(void)
 		for (i = 0; i < 16; i++) {
 			rx_pr("[%2d] ", i);
 			for (j = 0; j < 16; j++) {
-				rx_pr("0x%02lx, ",
-					   hdmirx_rd_top(TOP_EDID_OFFSET +
-							 (i * 16 + j)));
+				rx_pr("0x%02x, ",
+				      hdmirx_rd_top(TOP_EDID_OFFSET +
+							(i * 16 + j)));
 			}
 			rx_pr("\n");
 		}
@@ -3191,9 +3238,9 @@ void dump_edid_reg(void)
 		for (i = 0; i < 16; i++) {
 			rx_pr("[%2d] ", i);
 			for (j = 0; j < 16; j++) {
-				rx_pr("0x%02lx, ",
-					   hdmirx_rd_top(TOP_EDID_ADDR_S +
-							 (i * 16 + j)));
+				rx_pr("0x%02x, ",
+				      hdmirx_rd_top(TOP_EDID_ADDR_S +
+							(i * 16 + j)));
 			}
 			rx_pr("\n");
 		}
@@ -3201,27 +3248,27 @@ void dump_edid_reg(void)
 		for (i = 0; i < 16; i++) {
 			rx_pr("[%2d] ", i);
 			for (j = 0; j < 16; j++) {
-				rx_pr("0x%02lx, ",
-					   hdmirx_rd_top(TOP_EDID_ADDR_S +
-							 (i * 16 + j)));
+				rx_pr("0x%02x, ",
+				      hdmirx_rd_top(TOP_EDID_ADDR_S +
+							(i * 16 + j)));
 			}
 			rx_pr("\n");
 		}
 		for (i = 0; i < 16; i++) {
 			rx_pr("[%2d] ", i);
 			for (j = 0; j < 16; j++) {
-				rx_pr("0x%02lx, ",
-					   hdmirx_rd_top(TOP_EDID_PORT2_ADDR_S +
-							 (i * 16 + j)));
+				rx_pr("0x%02x, ",
+				      hdmirx_rd_top(TOP_EDID_PORT2_ADDR_S +
+							(i * 16 + j)));
 			}
 			rx_pr("\n");
 		}
 		for (i = 0; i < 16; i++) {
 			rx_pr("[%2d] ", i);
 			for (j = 0; j < 16; j++) {
-				rx_pr("0x%02lx, ",
-					   hdmirx_rd_top(TOP_EDID_PORT3_ADDR_S +
-							 (i * 16 + j)));
+				rx_pr("0x%02x, ",
+				      hdmirx_rd_top(TOP_EDID_PORT3_ADDR_S +
+							(i * 16 + j)));
 			}
 			rx_pr("\n");
 		}
@@ -3304,7 +3351,7 @@ int rx_get_aud_pll_err_sts(void)
 {
 	int ret = E_AUDPLL_OK;
 	int32_t req_clk = rx_measure_clock(MEASURE_CLK_MPLL);
-	int32_t aud_clk = rx_measure_clock(MEASURE_CLK_AUD_PLL);
+	u32 aud_clk = rx.aud_info.aud_clk;
 	uint32_t phy_pll_rate = (hdmirx_rd_phy(PHY_MAINFSM_STATUS1)>>9)&0x3;
 	uint32_t aud_pll_cntl = (rd_reg_hhi(HHI_AUD_PLL_CNTL6)>>28)&0x3;
 
@@ -3503,6 +3550,43 @@ static const uint32_t phy_dchd_2[][3] = {
 	},
 };
 
+static const u32 eq_debug[] = {
+	/* value     eq gain */
+	0xffffffff,
+	0xffff1030,/* min */
+	0x7fff1030,
+	0x7f7f1030,
+	0x3f7f1030,
+	0x3f3f1030,
+	0x1f3f1030,
+	0x1f1f1030,
+	0x0f0f1030,/* half of all range max */
+	0x0f071030,
+	0x07071030,
+	0x07031030,
+	0x03031030,
+	0x03011030,
+	0x01011030,
+	0x01001030,
+	0x00001030,/* max */
+	0xffff0000,/* min */
+	0x7fff0000,
+	0x7f7f0000,
+	0x3f7f0000,
+	0x3f3f0000,
+	0x1f3f0000,
+	0x1f1f0000,
+	0x0f0f0000,/* half of all range max */
+	0x0f070000,
+	0x07070000,
+	0x07030000,
+	0x03030000,
+	0x03010000,
+	0x01010000,
+	0x01000000,
+	0x00000000,/* max */
+};
+
 void aml_phy_switch_port(void)
 {
 	   uint32_t data32;
@@ -3594,10 +3678,14 @@ void aml_phy_init_1(void)
 void aml_phy_init(void)
 {
 	uint32_t idx = rx.phy.phy_bw;
-	uint32_t data32;
+	u32 data32, c1, c2, r1, r2;
 	uint32_t term_value =
 		hdmirx_rd_top(TOP_HPD_PWR5V) & 0x7;
 
+	c1 = eq_debug[eq_dbg_lvl] & 0xff;
+	c2 = (eq_debug[eq_dbg_lvl] >> 8) & 0xff;
+	r1 = (eq_debug[eq_dbg_lvl] >> 16) & 0xff;
+	r2 = (eq_debug[eq_dbg_lvl] >> 24) & 0xff;
 	data32 = phy_misci[idx][0];
 	data32 = (data32 & (~0x7));
 	data32 |= term_value;
@@ -3639,14 +3727,27 @@ void aml_phy_init(void)
 		wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL2,
 			phy_dcha_reva[idx][2]);
 	} else {
-		wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL0,
-			phy_dcha[idx][0]);
+		if (eq_dbg_lvl == 0) {
+			wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL0,
+				   phy_dcha[idx][0]);
 
-		wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL1,
-			phy_dcha[idx][1]);
+			wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL1,
+				   phy_dcha[idx][1]);
 
-		wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL2,
-			phy_dcha[idx][2]);
+			wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL2,
+				   phy_dcha[idx][2]);
+		} else {
+			wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL0,
+				   (phy_dcha[idx][0] | (c1 << 10)
+				| (c2 << 18) | (r1 << 26)));
+
+			wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL1,
+				   (phy_dcha[idx][1] | (r1 >> 6))
+				| (r2 << 2));
+
+			wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL2,
+				   (phy_dcha[idx][2] & (~(1 << 24))));
+		}
 	}
 
 	if (cdr_lock_level == 0)
@@ -3815,7 +3916,6 @@ void aml_phy_pll_setting(void)
 	uint32_t data, data2;
 	uint32_t cableclk = rx.phy.cable_clk / KHz;
 	int pll_rst_cnt = 0;
-	int m_div;
 
 	od_div = apll_tab[bw].od_div;
 	od = apll_tab[bw].od;
@@ -3835,17 +3935,19 @@ void aml_phy_pll_setting(void)
 	if (is_tl1_former())
 		od2 += 1;
 	do {
-		if ((vco_clk > (3000 * KHz)) && (vco_clk < (4800 * KHz)) &&
-			(M <= 80)) {
-			data2 = 0x300b8f30 | od2;
-			m_div = 2;
-		} else {
-			data2 = 0x300d8f30 | od2;
-			m_div = 1;
-		}
-
+		/*cntl0 M <7:0> N<14:10>*/
+		data = 0x00090400 & 0xffff8300;
+		data |= M;
+		data |= (N << 10);
+		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL0, data | 0x20000000);
+		udelay(5);
+		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL0, data | 0x30000000);
+		udelay(5);
 		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL1, 0x00000000);
-		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL2, 0x0000503c);
+		udelay(5);
+		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL2, 0x00001118);
+		udelay(5);
+		data2 = 0x10058f30 | od2;
 		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL3, data2);
 		if (is_tl1_former())
 			data2 = 0x000100c0;
@@ -3853,27 +3955,15 @@ void aml_phy_pll_setting(void)
 			data2 = 0x080130c0;
 		data2 |= (od << 24);
 		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL4, data2);
-		udelay(1);
-		/*cntl0 M <7:0> N<14:10>*/
-		data = 0x00090000;
-		data |= M * m_div;
-		data |= (N << 10);
-		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL0, data | 0x20000000);
-		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL0, data | 0x30000000);
-		udelay(50);
+		udelay(5);
+		/*apll_vctrl_mon_en*/
 		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL4, data2 | 0x00800000);
-		udelay(50);
+		udelay(5);
 		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL0, data | 0x34000000);
-		udelay(50);
-		if (m_div == 2) {
-			m_div = 1;
-			data &= 0xffffff00;
-			data |= M * m_div;
-			wr_reg_hhi(HHI_HDMIRX_APLL_CNTL0, data | 0x34000000);
-			udelay(50);
-		}
-		data &= 0xdfffffff;
+		udelay(5);
 		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL0, data | 0x14000000);
+		udelay(5);
+
 		/* bit'5: force lock bit'2: improve phy ldo voltage */
 		wr_reg_hhi(HHI_HDMIRX_APLL_CNTL2, 0x0000303c);
 
@@ -3988,6 +4078,26 @@ void rx_phy_rxsense_pulse(unsigned int t1, unsigned int t2, bool en)
 	mdelay(t2);
 }
 
+void aml_phy_power_off(void)
+{
+	/* pll power down */
+	wr_reg_hhi_bits(HHI_HDMIRX_APLL_CNTL0, _BIT(28), 0);
+	wr_reg_hhi_bits(HHI_HDMIRX_APLL_CNTL0, _BIT(29), 1);
+
+	/* phy power down */
+	wr_reg_hhi(HHI_HDMIRX_PHY_MISC_CNTL0, 0x32037800);
+	wr_reg_hhi(HHI_HDMIRX_PHY_MISC_CNTL1, 0x1000000);
+	wr_reg_hhi(HHI_HDMIRX_PHY_MISC_CNTL2, 0x62208002);
+	wr_reg_hhi(HHI_HDMIRX_PHY_MISC_CNTL3, 0x7);
+	wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL0, 0x1e);
+	wr_reg_hhi(HHI_HDMIRX_PHY_DCHA_CNTL1, 0x10000800);
+	wr_reg_hhi(HHI_HDMIRX_PHY_DCHD_CNTL0, 0x200000);
+	wr_reg_hhi(HHI_HDMIRX_PHY_DCHD_CNTL1, 0x0);
+
+	if (log_level & VIDEO_LOG)
+		rx_pr("%s\n", __func__);
+}
+
 void rx_phy_power_on(unsigned int onoff)
 {
 	if (onoff)
@@ -3997,10 +4107,7 @@ void rx_phy_power_on(unsigned int onoff)
 	if (rx.chip_id >= CHIP_ID_TL1) {
 		/*the enable of these regs are in phy init*/
 		if (onoff == 0) {
-			wr_reg_hhi_bits(HHI_HDMIRX_APLL_CNTL0, _BIT(28), onoff);
-			/*close termination 3.3v*/
-			wr_reg_hhi_bits(HHI_HDMIRX_PHY_MISC_CNTL0,
-					MSK(3, 0), onoff);
+			aml_phy_power_off();
 		}
 	}
 }
@@ -4097,9 +4204,9 @@ void rx_emp_field_done_irq(void)
 	recv_pagenum = (recv_byte_cnt >> PAGE_SHIFT) + 1;
 
 	if (rx.empbuff.irqcnt & 0x1)
-		dts_addr = rx.empbuff.storeB;
+		dts_addr = rx.empbuff.store_b;
 	else
-		dts_addr = rx.empbuff.storeA;
+		dts_addr = rx.empbuff.store_a;
 
 	if (recv_pkt_cnt >= EMP_BUFF_MAX_PKT_CNT) {
 		recv_pkt_cnt = EMP_BUFF_MAX_PKT_CNT - 1;
@@ -4156,11 +4263,11 @@ void rx_emp_field_done_irq(void)
 
 void rx_emp_status(void)
 {
-	rx_pr("p_addr_a=0x%x\n", rx.empbuff.p_addr_a);
-	rx_pr("p_addr_b=0x%x\n", rx.empbuff.p_addr_b);
-	rx_pr("storeA=0x%x\n", rx.empbuff.storeB);
-	rx_pr("storeB=0x%x\n", rx.empbuff.storeB);
-	rx_pr("irq cnt =0x%x\n", rx.empbuff.irqcnt);
+	rx_pr("p_addr_a=0x%p\n", (void *)rx.empbuff.p_addr_a);
+	rx_pr("p_addr_b=0x%p\n", (void *)rx.empbuff.p_addr_b);
+	rx_pr("store_a=0x%p\n", rx.empbuff.store_a);
+	rx_pr("store_b=0x%p\n", rx.empbuff.store_b);
+	rx_pr("irq cnt =0x%x\n", (unsigned int)rx.empbuff.irqcnt);
 	rx_pr("ready=0x%p\n", rx.empbuff.ready);
 	rx_pr("dump_mode =0x%x\n", rx.empbuff.dump_mode);
 	rx_pr("recv tmp pkt cnt=0x%x\n", rx.empbuff.emppktcnt);
@@ -4204,7 +4311,8 @@ void rx_tmds_to_ddr_init(void)
 				rx.empbuff.p_addr_a);
 			hdmirx_wr_top(TOP_EMP_DDR_START_B,
 				rx.empbuff.p_addr_a);
-			rx_pr("cfg hw addr=0x%x\n", rx.empbuff.p_addr_a);
+			rx_pr("cfg hw addr=0x%p\n",
+			      (void *)rx.empbuff.p_addr_a);
 		}
 
 		/* max pkt count to avoid buffer overflow */

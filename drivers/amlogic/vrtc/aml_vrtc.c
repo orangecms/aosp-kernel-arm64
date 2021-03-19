@@ -28,6 +28,7 @@
 #include <linux/debugfs.h>
 #include <linux/input.h>
 #include <linux/amlogic/pm.h>
+#include <linux/amlogic/scpi_protocol.h>
 
 static void __iomem *alarm_reg_vaddr;
 static void __iomem *timere_low_vaddr, *timere_high_vaddr;
@@ -44,6 +45,8 @@ static void send_power_btn_wakeup(void)
 		input_sync(vinput_dev);
 		input_event(vinput_dev, EV_KEY, KEY_POWER, 0);
 		input_sync(vinput_dev);
+		if (scpi_clr_wakeup_reason())
+			pr_debug("clr vrtc wakeup reason fail.\n");
 	}
 }
 
@@ -227,8 +230,6 @@ static int aml_vrtc_probe(struct platform_device *pdev)
 		timere_high_vaddr = ioremap(paddr + 4, 0x4);
 	}
 
-	ret = of_property_read_u32(pdev->dev.of_node,
-			"timer_e_addr", &paddr);
 	ret = of_property_read_string(pdev->dev.of_node, "init_date", &str);
 	if (!ret) {
 		pr_debug("init_date: %s\n", str);

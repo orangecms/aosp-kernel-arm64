@@ -103,6 +103,9 @@
 #define DOLBY_TV_AXI2DMA_CTRL3		(0xfd + CORETV_OFFSET)
 #define DOLBY_TV_STATUS0		(0xfe + CORETV_OFFSET)
 #define DOLBY_TV_STATUS1		(0xff + CORETV_OFFSET)
+#define DOLBY_TV_DIAG_CTRL		(0xe7 + CORETV_OFFSET)
+#define DOLBY_TV_CRC_CTRL		(0xea + CORETV_OFFSET)
+#define DOLBY_TV_OUTPUT_DM_CRC		(0xef + CORETV_OFFSET)
 
 
 #define VPP_WRAP_OSD1_MATRIX_EN_CTRL    0x3d6d
@@ -113,6 +116,11 @@
 #define VPP_DOLBY_CTRL			0x1d93
 #define VIU_SW_RESET			0x1a01
 #define VPU_HDMI_FMT_CTRL		0x2743
+#define VPU_422T0444_CTRL0		0x274b
+#define VPU_422T0444_CTRL1		0x274c
+#define VPU_422T0444_CTRL2		0x274d
+#define VPU_422T0444_RST		0x274a
+
 #if 0
 /* core 1 display manager 24 registers */
 struct dm_register_ipcore_1_s {

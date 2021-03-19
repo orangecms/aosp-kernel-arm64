@@ -229,6 +229,7 @@ struct amlpmu_context {
 	/* struct arm_pmu */
 	struct arm_pmu *pmu;
 
+	int private_interrupts;
 	int clusterb_enabled;
 
 	unsigned int __iomem *regs[MAX_CLUSTER_NR];
@@ -249,10 +250,10 @@ struct amlpmu_context {
 
 extern struct amlpmu_context amlpmu_ctx;
 
-int amlpmu_handle_irq(struct arm_pmu *cpu_pmu, int irq_num, int has_overflowed);
+void amlpmu_handle_irq(struct arm_pmu *cpu_pmu,
+		int irq_num,
+		int has_overflowed);
 
-/* defined int arch/arm(64)/kernel/perf_event(_v7).c */
-void amlpmu_handle_irq_ipi(void *arg);
 #endif
 
 #endif /* CONFIG_ARM_PMU */

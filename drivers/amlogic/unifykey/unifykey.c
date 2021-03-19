@@ -285,7 +285,8 @@ static int key_efuse_init(struct key_info_t *uk_info,
 static int key_efuse_write(char *keyname, unsigned char *keydata,
 		unsigned int datalen)
 {
-#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
+#if (defined(CONFIG_ARM64) || defined(CONFIG_ARM64_A32)) \
+	&& defined(CONFIG_AMLOGIC_EFUSE)
 	char *title = keyname;
 	struct efusekey_info info;
 
@@ -308,7 +309,8 @@ static int key_efuse_write(char *keyname, unsigned char *keydata,
 static int key_efuse_read(char *keyname, unsigned char *keydata,
 		unsigned int datalen, unsigned int *reallen)
 {
-#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
+#if (defined(CONFIG_ARM64) || defined(CONFIG_ARM64_A32)) \
+	&& defined(CONFIG_AMLOGIC_EFUSE)
 	char *title = keyname;
 	struct efusekey_info info;
 	int err = 0;
@@ -339,7 +341,8 @@ static int key_efuse_read(char *keyname, unsigned char *keydata,
 static int key_efuse_query(char *keyname, unsigned int *keystate)
 {
 	int err =  -EINVAL;
-#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
+#if (defined(CONFIG_ARM64) || defined(CONFIG_ARM64_A32)) \
+	&& defined(CONFIG_AMLOGIC_EFUSE)
 	int i;
 	char *title = keyname;
 	struct efusekey_info info;
@@ -545,7 +548,8 @@ int key_unify_size(struct aml_unifykey_dev *ukdev,
 
 	if (unifykey->permit & KEY_M_PERMIT_READ) {
 		switch (unifykey->dev) {
-#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
+#if (defined(CONFIG_ARM64) || defined(CONFIG_ARM64_A32)) \
+	&& defined(CONFIG_AMLOGIC_EFUSE)
 		case KEY_M_EFUSE:
 		{
 			struct efusekey_info info;
@@ -957,6 +961,7 @@ void  *get_ukdev(void)
 {
 	return ukdev_global;
 }
+EXPORT_SYMBOL(get_ukdev);
 
 static ssize_t unifykey_read(struct file *file,
 	char __user *buf,
@@ -1654,7 +1659,6 @@ static int aml_unifykeys_probe(struct platform_device *pdev)
 		ret = -ENODEV;
 		goto error1;
 	}
-	pr_info("unifykey_devno: %x\n", ukdev->uk_devno);
 
 	ukdev->cls.name = UNIFYKEYS_CLASS_NAME;
 	ukdev->cls.owner = THIS_MODULE;
@@ -1682,8 +1686,6 @@ static int aml_unifykeys_probe(struct platform_device *pdev)
 	}
 
 	devp->platform_data = get_unifykeys_drv_data(pdev);
-
-	pr_info("device %s created ok\n", UNIFYKEYS_DEVICE_NAME);
 
 	return 0;
 
@@ -1773,7 +1775,7 @@ static void __exit aml_unifykeys_exit(void)
 	platform_driver_unregister(&unifykey_platform_driver);
 }
 
-module_init(aml_unifykeys_init);
+rootfs_initcall(aml_unifykeys_init);
 module_exit(aml_unifykeys_exit);
 
 MODULE_DESCRIPTION("Amlogic unifykeys management driver");

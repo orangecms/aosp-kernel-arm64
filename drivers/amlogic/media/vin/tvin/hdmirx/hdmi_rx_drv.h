@@ -34,19 +34,20 @@
 #include "hdmi_rx_edid.h"
 
 
-#define RX_VER0 "ver.2019-05-07"
+#define RX_VER0 "ver.2019/10/21"
 /*
  *
  *
  *
  *
  */
-#define RX_VER1 "ver.2019/05/09"
+#define RX_VER1 "ver.2019/11/05"
 /*
  *
  *
+ *
  */
-#define RX_VER2 "ver.2019/05/08"
+#define RX_VER2 "ver.2019/11/18"
 
 /*print type*/
 #define	LOG_EN		0x01
@@ -325,6 +326,7 @@ struct vsi_info_s {
 	unsigned int dolby_timeout;
 	unsigned int eff_tmax_pq;
 	bool allm_mode;
+	bool hdr10plus;
 };
 
 #define CHANNEL_STATUS_SIZE   24
@@ -364,6 +366,7 @@ struct aud_info_s {
 	int real_channel_num;
 	int real_sample_size;
 	int real_sr;
+	u32 aud_clk;
 };
 
 struct phy_sts {
@@ -387,8 +390,8 @@ struct emp_buff {
 	phys_addr_t p_addr_b;
 	/*void __iomem *v_addr_a;*/
 	/*void __iomem *v_addr_b;*/
-	void __iomem *storeA;
-	void __iomem *storeB;
+	void __iomem *store_a;
+	void __iomem *store_b;
 	void __iomem *ready;
 	unsigned long irqcnt;
 	unsigned int emppktcnt;
@@ -449,6 +452,9 @@ struct rx_s {
 	/*struct pd_infoframe_s dbg_info;*/
 	struct phy_sts phy;
 	struct emp_buff empbuff;
+	uint32_t arc_port;
+	enum edid_ver_e edid_ver;
+	bool arc_5vsts;
 };
 
 struct _hdcp_ksv {
@@ -511,6 +517,16 @@ extern int sm_pause;
 extern int suspend_pddq_sel;
 extern int disable_port_num;
 extern int disable_port_en;
+extern bool video_stable_to_esm;
+extern bool pwr_sts_to_esm;
+extern bool enable_hdcp22_esm_log;
+extern bool esm_reset_flag;
+extern bool esm_auth_fail_en;
+extern bool esm_error_flag;
+extern bool hdcp22_stop_auth;
+extern bool hdcp22_esm_reset2;
+extern int esm_recovery_mode;
+
 extern int rx_set_global_variable(const char *buf, int size);
 extern void rx_get_global_variable(const char *buf);
 extern int rx_pr(const char *fmt, ...);
@@ -546,7 +562,6 @@ extern unsigned int *pd_fifo_buf;
 
 /* for other modules */
 extern int External_Mute(int mute_flag);
-extern void vdac_enable(bool on, unsigned int module_sel);
 extern int rx_is_hdcp22_support(void);
 extern int hdmirx_get_connect_info(void);
 #endif

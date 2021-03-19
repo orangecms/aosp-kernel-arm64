@@ -23,7 +23,8 @@
 
 /*V1.0: Local_contrast Basic function, iir algorithm, debug interface for tool*/
 /*V1.1: add ioctrl load interface supprt*/
-#define LC_VER		"Ref.2019/03/07-V1.1"
+/*v2.0: add lc tune curve node patch by vlsi-guopan*/
+#define LC_VER		"Ref.2019/05/30-V2.0"
 
 enum lc_mtx_sel_e {
 	INP_MTX = 0x1,
@@ -38,6 +39,8 @@ enum lc_mtx_csc_e {
 	LC_MTX_RGB_YUV709L = 0x2,
 	LC_MTX_YUV601L_RGB = 0x3,
 	LC_MTX_RGB_YUV601L = 0x4,
+	LC_MTX_YUV709_RGB  = 0x5,
+	LC_MTX_RGB_YUV709  = 0x6,
 	LC_MTX_MAX
 };
 
@@ -46,8 +49,10 @@ enum lc_reg_lut_e {
 	YMINVAL_LMT = 0x2,
 	YPKBV_YMAXVAL_LMT = 0x4,
 	YPKBV_RAT = 0x8,
-	YPKBV_SLP_LMT = 0x10,
-	CNTST_LMT = 0x20,
+	YMAXVAL_LMT = 0x10,
+	YPKBV_LMT = 0x20,
+	YPKBV_SLP_LMT = 0x40,
+	CNTST_LMT = 0x80,
 	MAX_REG_LUT
 };
 
@@ -59,8 +64,23 @@ struct lc_alg_param_s {
 	unsigned int dbg_parm4;
 };
 
+struct lc_curve_tune_param_s {
+	int lc_reg_lmtrat_sigbin;
+	int lc_reg_lmtrat_thd_max;
+	int lc_reg_lmtrat_thd_black;
+	int lc_reg_thd_black;
+	int yminv_black_thd;
+	int ypkbv_black_thd;
+
+	/* read back black pixel count */
+	int lc_reg_black_count;
+};
 
 extern int amlc_debug;
+extern int tune_curve_en;
+extern int detect_signal_range_en;
+extern int detect_signal_range_threshold_black;
+extern int detect_signal_range_threshold_white;
 extern int lc_en;
 extern int lc_demo_mode;
 extern unsigned int lc_hist_vs;
@@ -68,6 +88,9 @@ extern unsigned int lc_hist_ve;
 extern unsigned int lc_hist_hs;
 extern unsigned int lc_hist_he;
 extern unsigned int lc_hist_prcnt;
+extern unsigned int lc_node_prcnt;
+extern unsigned int lc_node_pos_h;
+extern unsigned int lc_node_pos_v;
 extern unsigned int lc_curve_prcnt;
 extern int osd_iir_en;
 extern int amlc_iir_debug_en;
@@ -91,6 +114,7 @@ extern int *curve_nodes_cur;
 extern int *lc_hist;/*12*8*17*/
 extern struct ve_lc_curve_parm_s lc_curve_parm_load;
 extern struct lc_alg_param_s lc_alg_parm;
+extern struct lc_curve_tune_param_s lc_tune_curve;
 
 extern void lc_init(int bitdepth);
 extern void lc_process(struct vframe_s *vf,
@@ -99,5 +123,6 @@ extern void lc_process(struct vframe_s *vf,
 	unsigned int sps_w_in,
 	unsigned int sps_h_in);
 extern void lc_free(void);
+void lc_disable(void);
 #endif
 

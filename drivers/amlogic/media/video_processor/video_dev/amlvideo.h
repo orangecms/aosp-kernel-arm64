@@ -27,6 +27,8 @@ struct v4l2_amlogic_parm {
 		u32	signal_type;
 		struct vframe_master_display_colour_s
 		 master_display_colour;
+		u32 hdr10p_data_size;
+		char hdr10p_data_buf[128];
 	};
 
 struct vivi_fmt {
@@ -89,6 +91,7 @@ struct vivi_dev {
 	struct vframe_receiver_s video_vf_recv;
 	u32 frame_num;
 	struct v4l2_amlogic_parm am_parm;
+	wait_queue_head_t wq;
 };
 
 struct vivi_fh {
@@ -103,6 +106,7 @@ struct vivi_fh {
 	enum v4l2_buf_type type;
 };
 
+extern bool video_inuse;
 extern bool omx_secret_mode;
 extern void get_ppmgr_buf_info(char **start, unsigned int *size);
 

@@ -31,6 +31,7 @@
 #include <linux/amlogic/media/amdolbyvision/dolby_vision.h>
 #include "amcsc.h"
 #include "local_contrast.h"
+#include "amve.h"
 
 #define pr_amcm_dbg(fmt, args...)\
 	do {\
@@ -90,8 +91,16 @@ void am_set_regmap(struct am_regs_s *p)
 	unsigned short i;
 	unsigned int temp = 0;
 	unsigned short sr1_temp = 0;
+	unsigned int skip = 0;
+	struct am_reg_s *dejaggy_reg;
+
+	dejaggy_reg = sr0_dej_setting[DEJAGGY_LEVEL - 1].am_reg;
 
 	for (i = 0; i < p->length; i++) {
+		skip = skip_pq_ctrl_load(&p->am_reg[i]);
+		if (skip != 0)
+			p->am_reg[i].mask &= ~skip;
+
 		switch (p->am_reg[i].type) {
 		case REG_TYPE_PHY:
 			break;
@@ -165,30 +174,38 @@ void am_set_regmap(struct am_regs_s *p)
 					if (get_cpu_type() >=
 						MESON_CPU_MAJOR_ID_G12A)
 						p->am_reg[i].val =
-						p->am_reg[i].val & 0xfffffffe;
+						p->am_reg[i].val & 0xfffffffc;
 					else
 						p->am_reg[i].val =
-						p->am_reg[i].val & 0xfffffffd;
+						p->am_reg[i].val & 0xfffffff9;
 				}
 				pr_amcm_dbg("[amcm]:%s REG_TYPE_INDEX_VPPCHROMA addr:0x%x",
 					__func__, p->am_reg[i].addr);
 			} else if (p->am_reg[i].addr == 0x208) {
+				if (get_cpu_type() >=
+					MESON_CPU_MAJOR_ID_G12A)
+					p->am_reg[i].val =
+						p->am_reg[i].val & 0xfffffffd;
+				else
+					p->am_reg[i].val =
+						p->am_reg[i].val & 0xfffffffb;
+
 				if (p->am_reg[i].val & 0x2)
 					cm_dis_flag = false;
 				else
 					cm_dis_flag = true;
 			}
 
-			WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT,
 					p->am_reg[i].addr);
 			if (p->am_reg[i].mask == 0xffffffff)
-				WRITE_VPP_REG(VPP_CHROMA_DATA_PORT,
+				VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT,
 						p->am_reg[i].val);
 			else {
-				temp = READ_VPP_REG(VPP_CHROMA_DATA_PORT);
-				WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT,
+				temp = VSYNC_RD_MPEG_REG(VPP_CHROMA_DATA_PORT);
+				VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT,
 						p->am_reg[i].addr);
-				WRITE_VPP_REG(VPP_CHROMA_DATA_PORT,
+				VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT,
 					(temp & (~(p->am_reg[i].mask))) |
 					(p->am_reg[i].val & p->am_reg[i].mask));
 			}
@@ -208,11 +225,24 @@ void am_set_regmap(struct am_regs_s *p)
 				WRITE_VPP_REG(VPP_CHROMA_DATA_PORT,
 						p->am_reg[i].val);
 			break;
-/* #if (MESON_CPU_TYPE >= MESON_CPU_TYPE_MESONG9TV) */
 		case REG_TYPE_VCBUS:
+			if (p->am_reg[i].addr ==
+			    SRSHARP0_DEJ_ALPHA + sr_offset[0]) {
+				dejaggy_reg[1].val =
+					p->am_reg[i].val & 0xff;
+				if (pd_detect_en)
+					p->am_reg[i].mask &= ~(0xff);
+			}
+
+			if (p->am_reg[i].addr ==
+			    SRSHARP0_DEJ_CTRL + sr_offset[0]) {
+				dejaggy_reg[0].val =
+					p->am_reg[i].val & 0x1;
+				if (pd_detect_en)
+					p->am_reg[i].mask &= ~(0x1);
+			}
+
 			if (p->am_reg[i].mask == 0xffffffff) {
-				/* WRITE_VCBUS_REG(p->am_reg[i].addr,*/
-				/* p->am_reg[i].val); */
 				if (pq_reg_wr_rdma)
 					VSYNC_WR_MPEG_REG(p->am_reg[i].addr,
 						p->am_reg[i].val);
@@ -245,17 +275,23 @@ void am_set_regmap(struct am_regs_s *p)
 			} else {
 				if (p->am_reg[i].addr == 0x1d26)
 					break;
-				if (p->am_reg[i].addr == SRSHARP1_LC_TOP_CTRL) {
-					temp =
-					(p->am_reg[i].val & p->am_reg[i].mask)
-						>> 4;
-					temp &= 0x1;
-					if (!temp && lc_en)
-						lc_en = 0;
+				if (sr_demo_flag) {
+					if ((p->am_reg[i].addr ==
+						SHARP0_DEMO_CRTL) ||
+						(p->am_reg[i].addr ==
+						SHARP1_DEMO_CRTL))
+						break;
+				}
+
+				if (p->am_reg[i].addr ==
+				    SRSHARP1_LC_TOP_CTRL + lc_offset) {
+					if (!lc_en)
+						p->am_reg[i].val =
+						p->am_reg[i].val & 0xffffffef;
 				}
 				if (pq_reg_wr_rdma)
 					VSYNC_WR_MPEG_REG(p->am_reg[i].addr,
-					(aml_read_vcbus(p->am_reg[i].addr) &
+					(VSYNC_RD_MPEG_REG(p->am_reg[i].addr) &
 					(~(p->am_reg[i].mask))) |
 					(p->am_reg[i].val & p->am_reg[i].mask));
 				else
@@ -277,23 +313,30 @@ void amcm_disable(void)
 {
 	int temp;
 
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, STA_CFG_REG);
+	temp = READ_VPP_REG(VPP_CHROMA_DATA_PORT);
+	temp = (temp & (~0xc0000000)) | (0 << 30);
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, STA_CFG_REG);
+	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, temp);
+
 	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, 0x208);
 	temp = READ_VPP_REG(VPP_CHROMA_DATA_PORT);
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		if (temp & 0x1) {
-			WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT,
 				0x208);
-			WRITE_VPP_REG(VPP_CHROMA_DATA_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT,
 				temp & 0xfffffffe);
 		}
 	} else {
 		if (temp & 0x2) {
-			WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT,
 				0x208);
-			WRITE_VPP_REG(VPP_CHROMA_DATA_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT,
 				temp & 0xfffffffd);
 		}
 	}
+
 	cm_en_flag = false;
 }
 
@@ -307,22 +350,67 @@ void amcm_enable(void)
 	temp = READ_VPP_REG(VPP_CHROMA_DATA_PORT);
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		if (!(temp & 0x1)) {
-			WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT,
 				0x208);
-			WRITE_VPP_REG(VPP_CHROMA_DATA_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT,
 				temp | 0x1);
 		}
 	} else {
 		if (!(temp & 0x2)) {
-			WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT,
 				0x208);
-			WRITE_VPP_REG(VPP_CHROMA_DATA_PORT,
+			VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT,
 				temp | 0x2);
 		}
 	}
+
+	/* enable CM histogram by default, mode 0 */
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, STA_CFG_REG);
+	temp = READ_VPP_REG(VPP_CHROMA_DATA_PORT);
+	temp = (temp & (~0xc0000000)) | (1 << 30);
+	temp = (temp & (~0xff0000)) | (24 << 16);
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, STA_CFG_REG);
+	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, temp);
+
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, LUMA_ADJ1_REG);
+	temp = READ_VPP_REG(VPP_CHROMA_DATA_PORT);
+	temp = (temp & (~(0x1fff0000))) | (0 << 16);
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, LUMA_ADJ1_REG);
+	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, temp);
+
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, STA_SAT_HIST0_REG);
+	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0 | (1 << 24));
+
+	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, STA_SAT_HIST1_REG);
+	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0);
+
 	cm_en_flag = true;
 }
 
+void pd_combing_fix_patch(enum pd_comb_fix_lvl_e level)
+{
+	int i, dejaggy_reg_count;
+	struct am_reg_s *dejaggy_reg;
+
+	/* p212 g12a and so on no related register lead to crash*/
+	/* so skip the function */
+	if (!(is_meson_tl1_cpu() || is_meson_txlx_cpu() ||
+	      is_meson_tm2_cpu() || is_meson_txl_cpu() ||
+	      is_meson_txhd_cpu()))
+		return;
+
+	pr_amcm_dbg("\n[amcm..] pd fix lvl = %d\n", level);
+
+	dejaggy_reg_count = sr0_dej_setting[level].length;
+	dejaggy_reg = sr0_dej_setting[level].am_reg;
+	for (i = 0; i < dejaggy_reg_count; i++) {
+		VSYNC_WR_MPEG_REG(
+		dejaggy_reg[i].addr + sr_offset[0],
+		(aml_read_vcbus(dejaggy_reg[i].addr + sr_offset[0]) &
+		(~(dejaggy_reg[i].mask))) |
+		(dejaggy_reg[i].val & dejaggy_reg[i].mask));
+	}
+}
 
 void cm_regmap_latch(struct am_regs_s *am_regs, unsigned int reg_map)
 {
@@ -372,14 +460,19 @@ void cm2_frame_size_patch(unsigned int width, unsigned int height)
 		amcm_enable();
 	vpp_size = width|(height << 16);
 	if (cm_size != vpp_size) {
-		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, 0x205);
-		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, vpp_size);
-		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, 0x209);
-		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, width<<15);
-		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, 0x20a);
-		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, height<<16);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT, 0x205);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT, vpp_size);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT, 0x209);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT, width << 16);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT, 0x20a);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT, height << 16);
+		/* default set full size for CM histogram */
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT, STA_WIN_XYXY0_REG);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT, 0 | (width << 16));
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_ADDR_PORT, STA_WIN_XYXY1_REG);
+		VSYNC_WR_MPEG_REG(VPP_CHROMA_DATA_PORT, 0 | (height << 16));
 		cm_size =  vpp_size;
-		pr_amcm_dbg("\n[amcm..]cm2_frame_patch: set cm2 framesize %x, ",
+		pr_amcm_dbg("\n[amcm..]cm size from scaler: set cm2 framesize %x, ",
 				vpp_size);
 		pr_amcm_dbg("set demo mode  %x\n", cm2_patch_flag);
 	}
@@ -404,27 +497,21 @@ void cm_latch_process(void)
 	do {
 		if (vecm_latch_flag & FLAG_REG_MAP0) {
 			cm_regmap_latch(&amregs0, FLAG_REG_MAP0);
-			break;
 		}
 		if (vecm_latch_flag & FLAG_REG_MAP1) {
 			cm_regmap_latch(&amregs1, FLAG_REG_MAP1);
-			break;
 		}
 		if (vecm_latch_flag & FLAG_REG_MAP2) {
 			cm_regmap_latch(&amregs2, FLAG_REG_MAP2);
-			break;
 		}
 		if (vecm_latch_flag & FLAG_REG_MAP3) {
 			cm_regmap_latch(&amregs3, FLAG_REG_MAP3);
-			break;
 		}
 		if (vecm_latch_flag & FLAG_REG_MAP4) {
 			cm_regmap_latch(&amregs4, FLAG_REG_MAP4);
-			break;
 		}
 		if (vecm_latch_flag & FLAG_REG_MAP5) {
 			cm_regmap_latch(&amregs5, FLAG_REG_MAP5);
-			break;
 		}
 		if ((cm2_patch_flag & 0xff) > 0)
 			cm2_frame_switch_patch();
@@ -434,7 +521,8 @@ void cm_latch_process(void)
 		if ((!is_meson_gxtvbb_cpu()) &&
 			(!is_meson_txl_cpu()) &&
 			(!is_meson_txlx_cpu()) &&
-			(!is_meson_tl1_cpu()))
+			(!is_meson_tl1_cpu()) &&
+			(!is_meson_tm2_cpu()))
 			amcm_level_sel(cm_level);
 		amcm_enable();
 		pr_amcm_dbg("\n[amcm..] set cm2 load OK!!!\n");
@@ -572,7 +660,7 @@ int cm_load_reg(struct am_regs_s *arg)
 {
 	int ret = 0;
 	/*force set cm size to 0,enable check vpp size*/
-	cm_size = 0;
+	/*cm_size = 0;*/
 	if (!(vecm_latch_flag & FLAG_REG_MAP0))
 		ret = amvecm_regmap_set(&amregs0, arg, FLAG_REG_MAP0);
 	else if (!(vecm_latch_flag & FLAG_REG_MAP1))

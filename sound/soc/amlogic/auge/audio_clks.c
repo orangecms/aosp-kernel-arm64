@@ -23,6 +23,8 @@
 
 #define DRV_NAME "audio-clocks"
 
+DEFINE_SPINLOCK(aclk_lock);
+
 static const struct of_device_id audio_clocks_of_match[] = {
 	{
 		.compatible = "amlogic, axg-audio-clocks",
@@ -43,6 +45,10 @@ static const struct of_device_id audio_clocks_of_match[] = {
 	{
 		.compatible = "amlogic, tm2-audio-clocks",
 		.data		= &tm2_audio_clks_init,
+	},
+	{
+		.compatible = "amlogic, sc2-audio-clocks",
+		.data       = &sc2_audio_clks_init,
 	},
 	{},
 };
@@ -99,6 +105,8 @@ static int audio_clocks_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	pr_info("%s done\n", __func__);
+
 	return 0;
 }
 
@@ -109,7 +117,16 @@ static struct platform_driver audio_clocks_driver = {
 	},
 	.probe  = audio_clocks_probe,
 };
-module_platform_driver(audio_clocks_driver);
+
+int __init audio_clocks_init(void)
+{
+	int ret;
+
+	ret = platform_driver_register(&audio_clocks_driver);
+
+	return ret;
+}
+core_initcall(audio_clocks_init);
 
 MODULE_AUTHOR("Amlogic, Inc.");
 MODULE_DESCRIPTION("Amlogic audio clocks ASoc driver");

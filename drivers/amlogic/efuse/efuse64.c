@@ -174,6 +174,7 @@ static long efuse_unlocked_ioctl(struct file *file, unsigned int cmd,
 				__func__, __LINE__);
 			return ret;
 		}
+		info.keyname[sizeof(info.keyname) - 1] = '\0';
 		if (efuse_getinfo(info.keyname, &info) < 0) {
 			pr_err("%s if not found\n", info.keyname);
 			return -EFAULT;
@@ -827,7 +828,7 @@ static void __exit efuse_exit(void)
 	platform_driver_unregister(&efuse_driver);
 }
 
-module_init(efuse_init);
+rootfs_initcall(efuse_init);
 module_exit(efuse_exit);
 
 MODULE_DESCRIPTION("AMLOGIC eFuse driver");

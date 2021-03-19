@@ -182,8 +182,20 @@ static const struct file_operations sched_feat_fops = {
 
 static __init int sched_init_debug(void)
 {
+#ifdef CONFIG_AMLOGIC_MODIFY
+	struct sched_domain *sd_ea_cpu0;
+#endif
+
 	debugfs_create_file("sched_features", 0644, NULL, NULL,
 			&sched_feat_fops);
+
+#ifdef CONFIG_AMLOGIC_MODIFY
+	sd_ea_cpu0 = per_cpu(sd_ea, 0);
+	if (!sd_ea_cpu0) {
+		pr_info("disable EAS feature\n");
+		sched_feat_set("NO_ENERGY_AWARE");
+	}
+#endif
 
 	return 0;
 }
@@ -269,14 +281,14 @@ sd_alloc_ctl_energy_table(struct sched_group_energy *sge)
 		return NULL;
 
 	set_table_entry(&table[0], "nr_idle_states", &sge->nr_idle_states,
-			sizeof(int), 0644, proc_dointvec_minmax, false);
+			sizeof(int), 0444, proc_dointvec_minmax, false);
 	set_table_entry(&table[1], "idle_states", &sge->idle_states[0].power,
-			sge->nr_idle_states*sizeof(struct idle_state), 0644,
+			sge->nr_idle_states*sizeof(struct idle_state), 0444,
 			proc_doulongvec_minmax, false);
 	set_table_entry(&table[2], "nr_cap_states", &sge->nr_cap_states,
-			sizeof(int), 0644, proc_dointvec_minmax, false);
+			sizeof(int), 0444, proc_dointvec_minmax, false);
 	set_table_entry(&table[3], "cap_states", &sge->cap_states[0].cap,
-			sge->nr_cap_states*sizeof(struct capacity_state), 0644,
+			sge->nr_cap_states*sizeof(struct capacity_state), 0444,
 			proc_doulongvec_minmax, false);
 
 	return table;
