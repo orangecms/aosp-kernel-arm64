@@ -875,6 +875,13 @@ KBUILD_CFLAGS += $(call cc-option,-Wdeclaration-after-statement,)
 # disable pointer signed / unsigned warnings in gcc 4.0
 KBUILD_CFLAGS += $(call cc-disable-warning, pointer-sign)
 
+KBUILD_CFLAGS += -Wno-array-bounds
+KBUILD_CFLAGS += -Wno-maybe-uninitialized
+KBUILD_CFLAGS += -Wno-sizeof-array-div
+KBUILD_CFLAGS += -Wno-stringop-overflow
+KBUILD_CFLAGS += -Wno-pointer-to-int-cast
+KBUILD_CFLAGS += -Wno-address-of-packed-member
+
 # disable stringop warnings in gcc 8+
 KBUILD_CFLAGS += $(call cc-disable-warning, stringop-truncation)
 
