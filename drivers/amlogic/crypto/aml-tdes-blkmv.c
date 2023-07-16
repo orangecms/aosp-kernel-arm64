@@ -451,7 +451,7 @@ static int aml_tdes_crypt_dma_stop(struct aml_tdes_dev *dd)
 
 		if (count != dd->dma_size) {
 			err = -EBUSY;
-			pr_err("not all data converted: %u\n", count);
+			pr_err("not all data converted: %ld\n", count);
 		}
 		dd->flags &= ~TDES_FLAGS_DMA;
 	}
@@ -478,7 +478,7 @@ static int aml_tdes_buff_init(struct aml_tdes_dev *dd)
 	dd->dma_addr_in = dma_map_single(dd->dev, dd->buf_in,
 			dd->buflen, DMA_TO_DEVICE);
 	if (dma_mapping_error(dd->dev, dd->dma_addr_in)) {
-		dev_err(dd->dev, "dma %d bytes error\n", dd->buflen);
+		dev_err(dd->dev, "dma %ld bytes error\n", dd->buflen);
 		err = -EINVAL;
 		goto err_map_in;
 	}
@@ -486,7 +486,7 @@ static int aml_tdes_buff_init(struct aml_tdes_dev *dd)
 	dd->dma_addr_out = dma_map_single(dd->dev, dd->buf_out,
 			dd->buflen, DMA_FROM_DEVICE);
 	if (dma_mapping_error(dd->dev, dd->dma_addr_out)) {
-		dev_err(dd->dev, "dma %d bytes error\n", dd->buflen);
+		dev_err(dd->dev, "dma %ld bytes error\n", dd->buflen);
 		err = -EINVAL;
 		goto err_map_out;
 	}

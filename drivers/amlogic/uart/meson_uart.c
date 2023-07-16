@@ -959,7 +959,7 @@ static int __init meson_early_console_setup(struct earlycon_device *device,
 	return 0;
 }
 EARLYCON_DECLARE(aml_uart, meson_early_console_setup);
-EARLYCON_DECLARE_COMP(aml-uart, meson_early_console_setup);
+// EARLYCON_DECLARE_COMP(aml-uart, meson_early_console_setup);
 
 static struct console meson_serial_console = {
 	.name = AML_UART_DEV_NAME,
@@ -1058,7 +1058,9 @@ static int meson_uart_probe(struct platform_device *pdev)
 	struct resource *res_mem, *res_irq;
 	struct uart_port *port;
 	struct meson_uart_port *mup;
+#ifdef CONFIG_AMLOGIC_CLK
 	struct clk *clk;
+#endif
 	const void *prop;
 	int ret = 0;
 

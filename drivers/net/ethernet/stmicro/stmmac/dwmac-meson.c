@@ -103,10 +103,10 @@ static void meson6_dwmac_fix_mac_speed(void *priv, unsigned int speed)
 
 	switch (speed) {
 	case SPEED_10:
-		val &= ~ETHMAC_SPEED_100;
+		val &= ~ETHMAC_SPEED_10;
 		break;
 	case SPEED_100:
-		val |= ETHMAC_SPEED_100;
+		val |= ETHMAC_SPEED_10;
 		break;
 	}
 
@@ -534,6 +534,8 @@ static int dwmac_meson_recover_analog(struct device *dev)
 	return 0;
 }
 
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+#  pragma GCC diagnostic ignored "-Wunused-function"
 static int meson6_dwmac_suspend(struct device *dev)
 {
 	int ret;
@@ -566,6 +568,8 @@ static int meson6_dwmac_suspend(struct device *dev)
 
 	return ret;
 }
+#endif
+
 static int meson6_dwmac_resume(struct device *dev)
 {
 	int ret;
@@ -657,6 +661,10 @@ static int meson6_dwmac_probe(struct platform_device *pdev)
 	struct plat_stmmacenet_data *plat_dat;
 	struct stmmac_resources stmmac_res;
 	struct meson_dwmac *dwmac;
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+#else
+	struct resource *res;
+#endif
 	int ret;
 
 	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
@@ -688,7 +696,6 @@ static int meson6_dwmac_probe(struct platform_device *pdev)
 			return ret;
 	}
 #else
-	struct resource *res;
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	dwmac->reg = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dwmac->reg)) {
@@ -702,8 +709,10 @@ static int meson6_dwmac_probe(struct platform_device *pdev)
 	ret = stmmac_dvr_probe(&pdev->dev, plat_dat, &stmmac_res);
 	if (ret)
 		goto err_remove_config_dt;
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
 	if (support_mac_wol)
 		device_init_wakeup(&pdev->dev, 1);
+#endif
 	return 0;
 
 err_remove_config_dt:

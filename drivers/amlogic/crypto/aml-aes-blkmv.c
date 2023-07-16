@@ -182,6 +182,7 @@ static int aml_aes_sg_copy(struct scatterlist **sg, size_t *offset,
 
 	while (buflen && total) {
 		count = min((*sg)->length - *offset, total);
+    // FIXME
 		count = min(count, buflen);
 
 		if (!count)
@@ -400,7 +401,7 @@ static int aml_aes_handle_queue(struct aml_aes_dev *dd,
 		if (dd->total % AML_AES_DMA_THRESHOLD == 0)
 			err = aml_aes_crypt_dma_start(dd, 1);
 		else {
-			pr_err("size %d is not multiple of %d",
+			pr_err("size %ld is not multiple of %d",
 					dd->total, AML_AES_DMA_THRESHOLD);
 			err = -EINVAL;
 		}
@@ -431,7 +432,7 @@ static int aml_aes_crypt_dma_stop(struct aml_aes_dev *dd)
 				dd->buf_out, dd->buflen, dd->dma_size, 1);
 		if (count != dd->dma_size) {
 			err = -EINVAL;
-			pr_err("not all data converted: %u\n", count);
+			pr_err("not all data converted: %ld\n", count);
 		}
 		dd->flags &= ~AES_FLAGS_DMA;
 	}
@@ -458,7 +459,7 @@ static int aml_aes_buff_init(struct aml_aes_dev *dd)
 	dd->dma_addr_in = dma_map_single(dd->dev, dd->buf_in,
 			dd->buflen, DMA_TO_DEVICE);
 	if (dma_mapping_error(dd->dev, dd->dma_addr_in)) {
-		dev_err(dd->dev, "dma %d bytes error\n", dd->buflen);
+		dev_err(dd->dev, "dma %ld bytes error\n", dd->buflen);
 		err = -EINVAL;
 		goto err_map_in;
 	}
@@ -466,7 +467,7 @@ static int aml_aes_buff_init(struct aml_aes_dev *dd)
 	dd->dma_addr_out = dma_map_single(dd->dev, dd->buf_out,
 			dd->buflen, DMA_FROM_DEVICE);
 	if (dma_mapping_error(dd->dev, dd->dma_addr_out)) {
-		dev_err(dd->dev, "dma %d bytes error\n", dd->buflen);
+		dev_err(dd->dev, "dma %ld bytes error\n", dd->buflen);
 		err = -EINVAL;
 		goto err_map_out;
 	}
